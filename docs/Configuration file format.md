@@ -10,13 +10,16 @@ If not specified, it will look for `~/.config/gh-actions-scaler/config.yaml`.
 The following is an example configuration with dynamic machine provisioning disabled:
 
 ```yaml
+log_level: info # Default: info
+
 github:
   personal_access_token: "${GITHUB_ACCESS_TOKEN}"
-
-runners:
-  name_prefix: "acme-{machine_id}-" # Default: "{machine_id}-"
-  scope: "repo" # "repo" Default: "repo"
-  repo_url: "https://github.com/foo/bar" # Required if scope == "repo"
+  # or
+  # personal_access_token: "${file:github_access_token.txt}"
+  runners:
+    name_prefix: "acme-{machine_id}-" # Default: "{machine_id}-"
+    scope: "repo" # "repo" Default: "repo"
+    repo_url: "https://github.com/foo/bar" # Required if scope == "repo"
 
 machine_defaults: # Optional
   ssh:
@@ -32,8 +35,8 @@ machine_defaults: # Optional
 
 machines:
   - id: machine-1
-    host: 172.18.0.100
     ssh:
+      host: 172.18.0.100
       port: 8022 # Default: 22
       fingerprint: "..." # Optional
       username: "..."
