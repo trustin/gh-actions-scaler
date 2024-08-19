@@ -12,7 +12,7 @@ use std::str::FromStr;
 use clap::{Parser, ValueEnum};
 use dirs;
 use log::LevelFilter;
-use crate::config::{Config, LogLevel};
+use crate::config::{Config, ConfigError, LogLevel};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -58,34 +58,34 @@ fn main() {
     log::set_max_level(cli.log_level.unwrap_or(LogLevel::Info).to_level_filter());
 
     info!("Using the configuration at: {}", config_path.display());
-    let config_str = fs::read_to_string(config_path).unwrap_or_else(|err| {
-        error!("Failed to read the configuration file: {}", err);
-        exit(1);
-    });
-
-    let config: Config = serde_yaml_ng::from_str(config_str.as_str()).unwrap_or_else(|err| {
-        error!("Failed to parse the configuration: {}", err);
-        exit(1);
-    });
-
-    // Adjust the log level if:
-    // - A user did not override the log level with the CLI option; and
-    // - A user specified the log level in the configuration.
-    if cli.log_level.is_none() {
-        if let Some(log_level) = config.log_level {
-            log::set_max_level(log_level.to_level_filter());
+    let config = match Config::try_from(config_path.as_path()) {
+        Ok(config) => config,
+        Err(err) => {
+            match err {
+                ConfigError::ReadFailure { path, cause } => {
+                    error!("Failed to read the configuration file: {} ({})", path, cause);
+                    exit(1);
+                }
+                ConfigError::ParseFailure { path, cause } => {
+                    error!("Failed to parse the configuration file: {} ({})", path, cause);
+                    exit(1);
+                }
+                ConfigError::UnresolvedEnvironmentVariable { name, cause } => {
+                    error!("Failed to resolve an environment variable: {} ({})", name, cause);
+                    exit(1);
+                }
+                ConfigError::UnresolvedFileVariable { path, cause } => {
+                    error!("Failed to resolve an external file: {} ({})", path, cause);
+                    exit(1);
+                }
+            }
         }
+    };
+
+    // Use the log level specified in the configuration file, if CLI log level was not specified.
+    if cli.log_level.is_none() {
+        log::set_max_level(config.log_level.unwrap().to_level_filter());
     }
 
     debug!("Deserialized configuration: {:?}", config);
-
-    // TODO: Post-process the parsed configuration.
-    // - "${ENV_VAR}"
-    // - "${file:path/to/file}"
-    // - "$${...}" should be interpreted into "${...}"
-    // - "${..." (invalid syntax) should trigger failure.
-
-    // TODO: Merge MachineDefaultsConfig into MachineConfigs.
-    // TODO: Validate the final configuration
-    // - SSH authentication settings
 }
