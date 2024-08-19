@@ -4,12 +4,10 @@ mod config;
 extern crate log;
 extern crate pretty_env_logger;
 
-use std::fs;
 use std::path::PathBuf;
 use std::process::exit;
-use std::str::FromStr;
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use dirs;
 use log::LevelFilter;
 use crate::config::{Config, ConfigError, LogLevel};

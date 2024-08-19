@@ -2,7 +2,7 @@ use std::{env, fmt, fs, io};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use clap::{value_parser, ValueEnum};
+use clap::ValueEnum;
 use log::LevelFilter;
 use regex::{Captures, Regex, Replacer};
 use serde::Deserialize;
@@ -190,7 +190,7 @@ pub enum ConfigError {
     ReadFailure { path: String, cause: io::Error },
     ParseFailure { path: String, cause: serde_yaml_ng::Error },
     UnresolvedEnvironmentVariable { name: String, cause: env::VarError },
-    UnresolvedFileVariable { path: String, cause: io::Error }
+    UnresolvedFileVariable { path: String, cause: io::Error },
 }
 
 fn resolve_config_value(config_dir: &Path, input: &str) -> Result<String, ConfigError> {
@@ -200,7 +200,7 @@ fn resolve_config_value(config_dir: &Path, input: &str) -> Result<String, Config
         input,
         ConfigVariableResolver {
             config_dir,
-            config_error_ref: &config_error_ref
+            config_error_ref: &config_error_ref,
         }).to_string();
 
     if let Some(config_error) = config_error_ref.take() {
@@ -258,7 +258,7 @@ impl ConfigVariableResolver<'_> {
         match fs::read_to_string(path.as_path()) {
             Ok(content) => {
                 dst.push_str(content.trim_end());
-            },
+            }
             Err(cause) => {
                 self.set_config_error(ConfigError::UnresolvedFileVariable {
                     path: path.to_str().unwrap().to_string(),
