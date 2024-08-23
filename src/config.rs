@@ -231,7 +231,7 @@ impl LogLevel {
 #[serde(deny_unknown_fields)]
 pub struct GithubConfig {
     pub personal_access_token: String,
-    pub runner: GithubRunnerConfig,
+    pub runners: GithubRunnerConfig,
 }
 
 impl fmt::Debug for GithubConfig {
@@ -244,7 +244,7 @@ impl fmt::Debug for GithubConfig {
             write!(f, "{}...", &self.personal_access_token[..8])?
         }
 
-        write!(f, ", runner: {:?} }}", self.runner)
+        write!(f, ", runners: {:?} }}", self.runners)
     }
 }
 
