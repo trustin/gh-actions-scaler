@@ -12,8 +12,12 @@ use std::io;
 /// - The content cannot be written to the file
 /// - There are any I/O errors during file creation or writing
 pub fn setup_file(filename: &str, content: &str) -> TeardownFile {
-    let path_buf = new_file(filename, content).unwrap_or_else(|e| panic!(
-        "Failed to create test file. filename: {}, content: {}. Error: {}", filename, content, e));
+    let path_buf = new_file(filename, content).unwrap_or_else(|e| {
+        panic!(
+            "Failed to create test file. filename: {}, content: {}. Error: {}",
+            filename, content, e
+        )
+    });
     TeardownFile::new(path_buf)
 }
 
