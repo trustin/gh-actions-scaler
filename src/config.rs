@@ -1,13 +1,13 @@
 mod resolver;
 
-use std::{env, fmt, fs, io};
-use std::cmp::max;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use crate::config::resolver::ConfigResolver;
 use clap::ValueEnum;
 use log::LevelFilter;
 use serde::Deserialize;
-use crate::config::resolver::ConfigResolver;
+use std::cmp::max;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::{env, fmt, fs, io};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,25 +22,17 @@ impl Config {
     pub fn try_from<T: AsRef<Path>>(config_file: T) -> Result<Self, ConfigError> {
         let config_file = config_file.as_ref();
         let parsed_config: Config = match fs::read_to_string(config_file) {
-            Ok(content) => {
-                match serde_yaml_ng::from_str(content.as_str()) {
-                    Ok(config) => {
-                        Ok(config)
-                    }
-                    Err(cause) => {
-                        Err(ConfigError::ParseFailure {
-                            path: config_file.to_str().unwrap().to_string(),
-                            cause,
-                        })
-                    }
-                }
-            }
-            Err(cause) => {
-                Err(ConfigError::ReadFailure {
+            Ok(content) => match serde_yaml_ng::from_str(content.as_str()) {
+                Ok(config) => Ok(config),
+                Err(cause) => Err(ConfigError::ParseFailure {
                     path: config_file.to_str().unwrap().to_string(),
                     cause,
-                })
-            }
+                }),
+            },
+            Err(cause) => Err(ConfigError::ReadFailure {
+                path: config_file.to_str().unwrap().to_string(),
+                cause,
+            }),
         }?;
 
         let config_dir = {
@@ -59,16 +51,26 @@ impl Config {
 impl Config {
     fn resolve_config(config_dir: &PathBuf, parsed_config: &Config) -> Result<Config, ConfigError> {
         let resolver = resolver::ConfigResolver::from(&config_dir);
-        let resolved_machine_defaults = Self::resolve_machine_defaults_config(parsed_config.machine_defaults.as_ref(), &resolver)?;
+        let resolved_machine_defaults = Self::resolve_machine_defaults_config(
+            parsed_config.machine_defaults.as_ref(),
+            &resolver,
+        )?;
         Ok(Config {
             log_level: parsed_config.log_level.or(Some(LogLevel::Info)),
             github: Self::resolve_github_config(&parsed_config.github, &resolver)?,
-            machines: Self::resolve_machine_configs(resolved_machine_defaults.as_ref(), &parsed_config.machines, &resolver)?,
+            machines: Self::resolve_machine_configs(
+                resolved_machine_defaults.as_ref(),
+                &parsed_config.machines,
+                &resolver,
+            )?,
             machine_defaults: resolved_machine_defaults,
         })
     }
 
-    fn resolve_github_config(c: &GithubConfig, r: &ConfigResolver) -> Result<GithubConfig, ConfigError> {
+    fn resolve_github_config(
+        c: &GithubConfig,
+        r: &ConfigResolver,
+    ) -> Result<GithubConfig, ConfigError> {
         Ok(GithubConfig {
             personal_access_token: r.resolve(&c.personal_access_token)?,
             runner: GithubRunnerConfig {
@@ -81,18 +83,24 @@ impl Config {
         // TODO Validate the configuration.
     }
 
-    fn resolve_machine_defaults_config(c: Option<&MachineDefaultsConfig>, r: &ConfigResolver) -> Result<Option<MachineDefaultsConfig>, ConfigError> {
+    fn resolve_machine_defaults_config(
+        c: Option<&MachineDefaultsConfig>,
+        r: &ConfigResolver,
+    ) -> Result<Option<MachineDefaultsConfig>, ConfigError> {
         Ok(match c {
-            Some(c) =>
-                Some(MachineDefaultsConfig {
-                    ssh: Self::resolve_ssh_config(None, c.ssh.as_ref(), r)?,
-                    runners: Self::resolve_runners_config(None, c.runners.as_ref(), r)?,
-                }),
+            Some(c) => Some(MachineDefaultsConfig {
+                ssh: Self::resolve_ssh_config(None, c.ssh.as_ref(), r)?,
+                runners: Self::resolve_runners_config(None, c.runners.as_ref(), r)?,
+            }),
             None => None,
         })
     }
 
-    fn resolve_machine_configs(defaults: Option<&MachineDefaultsConfig>, cfgs: &Vec<MachineConfig>, r: &ConfigResolver) -> Result<Vec<MachineConfig>, ConfigError> {
+    fn resolve_machine_configs(
+        defaults: Option<&MachineDefaultsConfig>,
+        cfgs: &Vec<MachineConfig>,
+        r: &ConfigResolver,
+    ) -> Result<Vec<MachineConfig>, ConfigError> {
         let mut out: Vec<MachineConfig> = vec![];
         match defaults {
             Some(d) => {
@@ -100,7 +108,11 @@ impl Config {
                     out.push(MachineConfig {
                         id: r.resolve_opt(&c.id)?,
                         ssh: Self::resolve_ssh_config(d.ssh.as_ref(), c.ssh.as_ref(), r)?,
-                        runners: Self::resolve_runners_config(d.runners.as_ref(), c.runners.as_ref(), r)?,
+                        runners: Self::resolve_runners_config(
+                            d.runners.as_ref(),
+                            c.runners.as_ref(),
+                            r,
+                        )?,
                     })
                 }
             }
@@ -118,25 +130,45 @@ impl Config {
         Ok(out)
     }
 
-    fn resolve_ssh_config(defaults: Option<&SshConfig>, c: Option<&SshConfig>, r: &ConfigResolver) -> Result<Option<SshConfig>, ConfigError> {
+    fn resolve_ssh_config(
+        defaults: Option<&SshConfig>,
+        c: Option<&SshConfig>,
+        r: &ConfigResolver,
+    ) -> Result<Option<SshConfig>, ConfigError> {
         Ok(match c {
-            Some(c) =>
-                Some(SshConfig {
-                    host: r.resolve_opt(&c.host)?.or(defaults.and_then(|d| d.host.clone())),
-                    port: c.port.or(defaults.and_then(|d| d.port)).or(Some(22)),
-                    fingerprint: r.resolve_opt(&c.fingerprint)?.or(defaults.and_then(|d| d.fingerprint.clone())),
-                    username: r.resolve_opt(&c.username)?.or(defaults.and_then(|d| d.username.clone())).or(Some(whoami::username())),
-                    password: r.resolve_opt(&c.password)?.or(defaults.and_then(|d| d.password.clone())),
-                    private_key: r.resolve_opt(&c.private_key)?.or(defaults.and_then(|d| d.private_key.clone())),
-                    private_key_passphrase: r.resolve_opt(&c.private_key_passphrase)?.or(defaults.and_then(|d| d.private_key_passphrase.clone())),
-                }),
+            Some(c) => Some(SshConfig {
+                host: r
+                    .resolve_opt(&c.host)?
+                    .or(defaults.and_then(|d| d.host.clone())),
+                port: c.port.or(defaults.and_then(|d| d.port)).or(Some(22)),
+                fingerprint: r
+                    .resolve_opt(&c.fingerprint)?
+                    .or(defaults.and_then(|d| d.fingerprint.clone())),
+                username: r
+                    .resolve_opt(&c.username)?
+                    .or(defaults.and_then(|d| d.username.clone()))
+                    .or(Some(whoami::username())),
+                password: r
+                    .resolve_opt(&c.password)?
+                    .or(defaults.and_then(|d| d.password.clone())),
+                private_key: r
+                    .resolve_opt(&c.private_key)?
+                    .or(defaults.and_then(|d| d.private_key.clone())),
+                private_key_passphrase: r
+                    .resolve_opt(&c.private_key_passphrase)?
+                    .or(defaults.and_then(|d| d.private_key_passphrase.clone())),
+            }),
             None => None, // TODO: Reject
         })
 
         // TODO Validate the configuration.
     }
 
-    fn resolve_runners_config(defaults: Option<&RunnersConfig>, c: Option<&RunnersConfig>, r: &ConfigResolver) -> Result<Option<RunnersConfig>, ConfigError> {
+    fn resolve_runners_config(
+        defaults: Option<&RunnersConfig>,
+        c: Option<&RunnersConfig>,
+        r: &ConfigResolver,
+    ) -> Result<Option<RunnersConfig>, ConfigError> {
         let default_min_runners = 1;
         let default_max_runners = 16;
         let default_idle_timeout = "1m";
@@ -144,12 +176,19 @@ impl Config {
         Ok(match c {
             Some(c) => {
                 let min_runners = c.min.or(defaults.and_then(|d| d.min)).unwrap_or(1);
-                let max_runners = c.max.or(defaults.and_then(|d| d.max)).unwrap_or_else(|| max(min_runners, default_max_runners));
+                let max_runners = c
+                    .max
+                    .or(defaults.and_then(|d| d.max))
+                    .unwrap_or_else(|| max(min_runners, default_max_runners));
 
                 Some(RunnersConfig {
                     min: Some(min_runners),
                     max: Some(max_runners),
-                    idle_timeout: Some(r.resolve_opt(&c.idle_timeout)?.or(defaults.and_then(|d| d.idle_timeout.clone())).unwrap_or_else(|| default_idle_timeout.to_string())),
+                    idle_timeout: Some(
+                        r.resolve_opt(&c.idle_timeout)?
+                            .or(defaults.and_then(|d| d.idle_timeout.clone()))
+                            .unwrap_or_else(|| default_idle_timeout.to_string()),
+                    ),
                 })
             }
             None => Some(RunnersConfig {
@@ -257,20 +296,24 @@ impl fmt::Debug for SshConfig {
 
         write!(f, "private_key: ")?;
         match &self.private_key {
-            Some(key) => if key.len() < 16 {
-                write!(f, "[REDACTED]")?
-            } else {
-                write!(f, "{}...", &key[..16])?
-            },
-            None => write!(f, "None")?
+            Some(key) => {
+                if key.len() < 16 {
+                    write!(f, "[REDACTED]")?
+                } else {
+                    write!(f, "{}...", &key[..16])?
+                }
+            }
+            None => write!(f, "None")?,
         };
 
         write!(
-            f, ", private_key_passphrase: {} }}",
+            f,
+            ", private_key_passphrase: {} }}",
             match self.private_key_passphrase {
                 Some(_) => "[REDACTED]",
                 None => "None",
-            })
+            }
+        )
     }
 }
 
@@ -284,8 +327,20 @@ pub struct RunnersConfig {
 
 #[derive(Debug)]
 pub enum ConfigError {
-    ReadFailure { path: String, cause: io::Error },
-    ParseFailure { path: String, cause: serde_yaml_ng::Error },
-    UnresolvedEnvironmentVariable { name: String, cause: env::VarError },
-    UnresolvedFileVariable { path: String, cause: io::Error },
+    ReadFailure {
+        path: String,
+        cause: io::Error,
+    },
+    ParseFailure {
+        path: String,
+        cause: serde_yaml_ng::Error,
+    },
+    UnresolvedEnvironmentVariable {
+        name: String,
+        cause: env::VarError,
+    },
+    UnresolvedFileVariable {
+        path: String,
+        cause: io::Error,
+    },
 }

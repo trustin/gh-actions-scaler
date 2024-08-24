@@ -7,9 +7,9 @@ extern crate pretty_env_logger;
 use std::path::PathBuf;
 use std::process::exit;
 
+use crate::config::{Config, ConfigError, LogLevel};
 use clap::Parser;
 use log::LevelFilter;
-use crate::config::{Config, ConfigError, LogLevel};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -57,26 +57,33 @@ fn main() {
     info!("Using the configuration at: {}", config_path.display());
     let config = match Config::try_from(config_path.as_path()) {
         Ok(config) => config,
-        Err(err) => {
-            match err {
-                ConfigError::ReadFailure { path, cause } => {
-                    error!("Failed to read the configuration file: {} ({})", path, cause);
-                    exit(1);
-                }
-                ConfigError::ParseFailure { path, cause } => {
-                    error!("Failed to parse the configuration file: {} ({})", path, cause);
-                    exit(1);
-                }
-                ConfigError::UnresolvedEnvironmentVariable { name, cause } => {
-                    error!("Failed to resolve an environment variable: {} ({})", name, cause);
-                    exit(1);
-                }
-                ConfigError::UnresolvedFileVariable { path, cause } => {
-                    error!("Failed to resolve an external file: {} ({})", path, cause);
-                    exit(1);
-                }
+        Err(err) => match err {
+            ConfigError::ReadFailure { path, cause } => {
+                error!(
+                    "Failed to read the configuration file: {} ({})",
+                    path, cause
+                );
+                exit(1);
             }
-        }
+            ConfigError::ParseFailure { path, cause } => {
+                error!(
+                    "Failed to parse the configuration file: {} ({})",
+                    path, cause
+                );
+                exit(1);
+            }
+            ConfigError::UnresolvedEnvironmentVariable { name, cause } => {
+                error!(
+                    "Failed to resolve an environment variable: {} ({})",
+                    name, cause
+                );
+                exit(1);
+            }
+            ConfigError::UnresolvedFileVariable { path, cause } => {
+                error!("Failed to resolve an external file: {} ({})", path, cause);
+                exit(1);
+            }
+        },
     };
 
     // Use the log level specified in the configuration file, if CLI log level was not specified.

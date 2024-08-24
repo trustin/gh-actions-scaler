@@ -1,22 +1,27 @@
-use std::cell::RefCell;
-use std::{env, fs};
-use std::path::{Path, PathBuf};
+use crate::config::ConfigError;
 use once_cell::sync::Lazy;
 use regex::{Captures, Regex, Replacer};
-use crate::config::ConfigError;
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::{env, fs};
 
 pub struct ConfigResolver {
     config_dir: PathBuf,
 }
 
-impl <P: AsRef<Path>> From<P> for ConfigResolver {
+impl<P: AsRef<Path>> From<P> for ConfigResolver {
     fn from(config_dir: P) -> Self {
-        ConfigResolver { config_dir: PathBuf::from(config_dir.as_ref()) }
+        ConfigResolver {
+            config_dir: PathBuf::from(config_dir.as_ref()),
+        }
     }
 }
 
 impl ConfigResolver {
-    pub fn resolve_opt<STR: AsRef<str>>(&self, input: &Option<STR>) -> Result<Option<String>, ConfigError> {
+    pub fn resolve_opt<STR: AsRef<str>>(
+        &self,
+        input: &Option<STR>,
+    ) -> Result<Option<String>, ConfigError> {
         match input {
             Some(value) => Ok(Some(self.resolve(value)?)),
             None => Ok(None),
@@ -26,12 +31,15 @@ impl ConfigResolver {
     pub fn resolve<STR: AsRef<str>>(&self, input: STR) -> Result<String, ConfigError> {
         static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\$\$)|\$\{(file:)?([^}]+)}").unwrap());
         let config_error_ref: RefCell<Option<ConfigError>> = RefCell::new(None);
-        let resolved_value = RE.replace_all(
-            input.as_ref(),
-            ConfigVariableResolver {
-                config_dir: self.config_dir.as_path(),
-                config_error_ref: &config_error_ref,
-            }).to_string();
+        let resolved_value = RE
+            .replace_all(
+                input.as_ref(),
+                ConfigVariableResolver {
+                    config_dir: self.config_dir.as_path(),
+                    config_error_ref: &config_error_ref,
+                },
+            )
+            .to_string();
 
         if let Some(config_error) = config_error_ref.take() {
             Err(config_error)
@@ -54,12 +62,11 @@ impl Replacer for ConfigVariableResolver<'_> {
             return;
         }
 
-
         // Replace ${...} with the environment variable value or the file content.
         let name = caps.get(3).unwrap().as_str();
         match caps.get(2) {
             Some(_) => self.append_file(name, dst),
-            None => self.append_env_var(name, dst)
+            None => self.append_env_var(name, dst),
         }
     }
 }
