@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::process::exit;
 
 use clap::Parser;
-use dirs;
 use log::LevelFilter;
 use crate::config::{Config, ConfigError, LogLevel};
 
