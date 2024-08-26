@@ -12,8 +12,8 @@ mod common;
 #[cfg(test)]
 mod config_tests {
     mod success {
-        use std::path::Path;
         use gh_actions_scaler::config::{Config, LogLevel};
+        use std::path::Path;
 
         #[test]
         fn all_empty_field() {
@@ -85,10 +85,7 @@ mod config_tests {
                 "config file read fail. reason: `{:?}`",
                 config_result.err()
             );
-            assert_eq!(
-                config_result.unwrap().log_level,
-                Some(LogLevel::Info)
-            );
+            assert_eq!(config_result.unwrap().log_level, Some(LogLevel::Info));
         }
 
         #[test]
@@ -121,8 +118,8 @@ mod config_tests {
     }
 
     mod fail_yaml_parse {
-        use std::path::Path;
         use gh_actions_scaler::config::{Config, ConfigError};
+        use std::path::Path;
 
         #[test]
         fn invalid_format() {
@@ -144,10 +141,10 @@ mod config_tests {
     }
 
     mod file_read {
+        use crate::common::TeardownPermissionDenied;
         use gh_actions_scaler::config::{Config, ConfigError};
         use std::io::ErrorKind;
         use std::path::Path;
-        use crate::common::TeardownPermissionDenied;
 
         // TODO need?? window file permission test -> i dont have window...
         #[test]
@@ -207,8 +204,8 @@ mod config_tests {
     }
 
     mod resolve_environment {
-        use std::path::Path;
         use gh_actions_scaler::config::{Config, ConfigError};
+        use std::path::Path;
 
         #[test]
         fn success_brace() {
@@ -252,9 +249,9 @@ mod config_tests {
     }
 
     mod resolve_file_variable {
+        use crate::common::TeardownPermissionDenied;
         use gh_actions_scaler::config::{Config, ConfigError};
         use std::path::Path;
-        use crate::common::TeardownPermissionDenied;
 
         #[test]
         fn success() {
@@ -277,8 +274,9 @@ mod config_tests {
         fn fail_permission_denied() {
             // given
             let path = Path::new("tests/fixtures/config/file_token_permission_denied.yaml");
-            let teardown = TeardownPermissionDenied::from(Path::new("tests/fixtures/config/permission_denied_token"));
-
+            let teardown = TeardownPermissionDenied::from(Path::new(
+                "tests/fixtures/config/permission_denied_token",
+            ));
 
             // when
             let config = Config::try_from(path);
