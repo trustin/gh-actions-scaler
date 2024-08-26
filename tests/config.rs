@@ -1,30 +1,26 @@
 mod common;
-mod config_test_fixture;
-
 // TODO not impl feature
 //  1. require field validation
-//    1-1. github > runners > repo_url when scope=repo
-//    1-2. machines > id
-//    1-3. machines > ssh > host, port
-//    1-4. machines > ssh > (username, password) or (private_key, public_key)
+//    1-1. github > personal_access_token
+//    1-2. github > runners > repo_url when scope=repo
+//    1-3. machines empty -> At least one machine is required
+//    1-4. machines > id
+//    1-5. machines > ssh > host, port
+//    1-6. machines > ssh > (username, password) or (private_key, public_key)
 //  2. github > runners > default values
 
 #[cfg(test)]
 mod config_tests {
-    use crate::config_test_fixture::{config_content_with_token, empty_config, one_machine_config};
-
     mod success {
-        use crate::common::setup_file;
-        use config::config::Config;
+        use std::path::Path;
+        use gh_actions_scaler::config::{Config, LogLevel};
 
         #[test]
         fn all_empty_field() {
             // given
-            let teardown_file =
-                setup_file("success|all_empty_field", super::empty_config().as_str());
+            let path = Path::new("tests/fixtures/config/empty.yaml");
 
             // when
-            let path = teardown_file.path();
             let config = Config::try_from(path);
 
             // then
@@ -38,13 +34,9 @@ mod config_tests {
         #[test]
         fn one_machine() {
             // given
-            let teardown_file = setup_file(
-                "success|one_machine",
-                super::one_machine_config("machine-1", "172.18.0.100", 8022, "abc", "abc").as_str(),
-            );
+            let path = Path::new("tests/fixtures/config/one_machine.yaml");
 
             // when
-            let path = teardown_file.path();
             let config = Config::try_from(path);
 
             // then
@@ -58,10 +50,15 @@ mod config_tests {
             let machines = &config.machines;
             assert_eq!(machines.len(), 1);
 
-            let machine = &machines[0]; // Using indexing instead of get
+            let machine = &machines[0];
             assert_eq!(machine.id, Some("machine-1".to_string()));
 
-            assert!(machine.runners.is_none());
+            assert!(machine.runners.is_some());
+            let runners = machine.runners.as_ref().unwrap();
+            assert_eq!(runners.min, Some(2));
+            assert_eq!(runners.max, Some(2));
+            assert_eq!(runners.idle_timeout, Some("5m".to_string()));
+
             assert!(machine.ssh.is_some());
             let ssh = machine.ssh.as_ref().unwrap();
 
@@ -77,11 +74,9 @@ mod config_tests {
         #[test]
         fn default_logger() {
             // given
-            let teardown_file =
-                setup_file("success|default_logger", super::empty_config().as_str());
+            let path = Path::new("tests/fixtures/config/empty.yaml");
 
             // when
-            let path = teardown_file.path();
             let config_result = Config::try_from(path);
 
             // then
@@ -92,22 +87,49 @@ mod config_tests {
             );
             assert_eq!(
                 config_result.unwrap().log_level,
-                Some(config::config::LogLevel::Info)
+                Some(LogLevel::Info)
             );
+        }
+
+        #[test]
+        fn default_runners() {
+            // given
+            let path = Path::new("tests/fixtures/config/default_runner_machine.yaml");
+
+            // when
+            let config = Config::try_from(path);
+
+            // then
+            assert!(
+                config.is_ok(),
+                "config file read fail. reason: `{:?}`",
+                config.err()
+            );
+            let config = config.unwrap();
+
+            let machines = &config.machines;
+            assert_eq!(machines.len(), 1);
+
+            let machine = &machines[0];
+
+            assert!(machine.runners.is_some());
+            let runners = machine.runners.as_ref().unwrap();
+            assert_eq!(runners.min, Some(1));
+            assert_eq!(runners.max, Some(16));
+            assert_eq!(runners.idle_timeout, Some("1m".to_string()));
         }
     }
 
     mod fail_yaml_parse {
-        use crate::common::setup_file;
-        use config::config::{Config, ConfigError};
+        use std::path::Path;
+        use gh_actions_scaler::config::{Config, ConfigError};
 
         #[test]
         fn invalid_format() {
             // given
-            let teardown_file = setup_file("fail_yaml_parse|invalid_format", "abc");
+            let path = Path::new("tests/fixtures/config/invalid_format.yaml");
 
             // when
-            let path = teardown_file.path();
             let config = Config::try_from(path);
 
             // then
@@ -115,58 +137,24 @@ mod config_tests {
 
             println!("{:?}", config);
             match config.err().unwrap() {
-                ConfigError::ParseFailure { path: _, cause } => {}
-                other_error => assert!(false, "is not ParseFailure. error: {:?}", other_error),
-            }
-        }
-
-        #[test]
-        fn no_github_access_token() {
-            let empty_token_config: &str = "\
-github:
-  runners:
-    name_prefix: acme
-    scope: repo
-    repo_url: https://github.com/foo/bar
-machines:";
-            // given
-            let teardown_file =
-                setup_file("fail_yaml_parse|no_github_access_token", empty_token_config);
-
-            // when
-            let path = teardown_file.path();
-            let config = Config::try_from(path);
-
-            // then
-            assert!(config.is_err());
-
-            println!("{:?}", config);
-            match config.err().unwrap() {
-                ConfigError::ParseFailure { path: _, cause } => {}
+                ConfigError::ParseFailure { .. } => {}
                 other_error => assert!(false, "is not ParseFailure. error: {:?}", other_error),
             }
         }
     }
 
     mod file_read {
-        use crate::common::setup_file;
-        use config::config::{Config, ConfigError};
+        use gh_actions_scaler::config::{Config, ConfigError};
         use std::io::ErrorKind;
-        use std::os::unix::fs::PermissionsExt;
         use std::path::Path;
+        use crate::common::TeardownPermissionDenied;
 
+        // TODO need?? window file permission test -> i dont have window...
         #[test]
         fn fail_permission_denied() {
             // given
-            let teardown_file = setup_file(
-                "file_read|fail_permission_denied",
-                super::empty_config().as_str(),
-            );
-            let path = teardown_file.path();
-
-            // TODO need?? window file permission test
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o200))
-                .expect("test file permission change fail");
+            let path = Path::new("tests/fixtures/config/permission_denied.yaml");
+            let teardown = TeardownPermissionDenied::from(path);
 
             // when
             let config = Config::try_from(path);
@@ -219,24 +207,21 @@ machines:";
     }
 
     mod resolve_environment {
-        use crate::common::setup_file;
-        use config::config::{Config, ConfigError};
+        use std::path::Path;
+        use gh_actions_scaler::config::{Config, ConfigError};
 
         #[test]
         fn success_brace() {
             // given
-            std::env::set_var("VARIABLE_TEST1", "yes");
+            std::env::set_var("CONFIG_VARIABLE_TEST", "yes");
 
-            let teardown_file = setup_file(
-                "resolve_environment|success_brace",
-                super::config_content_with_token("${VARIABLE_TEST1}").as_str(),
-            );
-            let path = teardown_file.path();
+            let path = Path::new("tests/fixtures/config/with_brace_token.yaml");
 
             // when
             let config = Config::try_from(path);
 
             // then
+            std::env::remove_var("CONFIG_VARIABLE_TEST");
             assert!(
                 config.is_ok(),
                 "is not ok. return error: {:?}",
@@ -248,11 +233,7 @@ machines:";
         #[test]
         fn fail_brace() {
             // given
-            let teardown_file = setup_file(
-                "resolve_environment|fail_brace",
-                super::config_content_with_token("${VARIABLE_TEST2}").as_str(),
-            );
-            let path = teardown_file.path();
+            let path = Path::new("tests/fixtures/config/with_not_exist_brace_token.yaml");
 
             // when
             let config = Config::try_from(path);
@@ -271,19 +252,14 @@ machines:";
     }
 
     mod resolve_file_variable {
-        use crate::common::setup_file;
-        use config::config::{Config, ConfigError};
-        use std::os::unix::fs::PermissionsExt;
+        use gh_actions_scaler::config::{Config, ConfigError};
+        use std::path::Path;
+        use crate::common::TeardownPermissionDenied;
 
         #[test]
         fn success() {
             // given
-            let teardown_token_file = setup_file("success_token", "1234567890");
-            let teardown_config_file = setup_file(
-                "resolve_file_variable|success",
-                super::config_content_with_token("\"${file:success_token}\"").as_str(),
-            );
-            let path = teardown_config_file.path();
+            let path = Path::new("tests/fixtures/config/file_token_resolve.yaml");
 
             // when
             let config = Config::try_from(path);
@@ -300,18 +276,9 @@ machines:";
         #[test]
         fn fail_permission_denied() {
             // given
-            let teardown_token_file = setup_file("permission_denied_token", "1234567890");
-            std::fs::set_permissions(
-                teardown_token_file.path(),
-                std::fs::Permissions::from_mode(0o200),
-            )
-            .expect("test token file permission change fail");
+            let path = Path::new("tests/fixtures/config/file_token_permission_denied.yaml");
+            let teardown = TeardownPermissionDenied::from(Path::new("tests/fixtures/config/permission_denied_token"));
 
-            let teardown_config_file = setup_file(
-                "resolve_file_variable|fail_permission_denied",
-                super::config_content_with_token("\"${file:permission_denied_token}\"").as_str(),
-            );
-            let path = teardown_config_file.path();
 
             // when
             let config = Config::try_from(path);
@@ -331,11 +298,7 @@ machines:";
         #[test]
         fn fail_not_exist() {
             // given
-            let teardown_file = setup_file(
-                "resolve_file_variable|fail_not_exist",
-                super::config_content_with_token("${file:not_exist_token}").as_str(),
-            );
-            let path = teardown_file.path();
+            let path = Path::new("tests/fixtures/config/file_token_not_exist.yaml");
 
             // when
             let config = Config::try_from(path);

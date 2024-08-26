@@ -1,0 +1,4 @@
+github:
+  personal_access_token: ${CONFIG_VARIABLE_TEST_NOT_EXIST}
+  runners:
+machines:
