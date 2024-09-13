@@ -1,4 +1,4 @@
 github:
-  personal_access_token: ${CONFIG_VARIABLE_TEST}
+  personal_access_token: ${GH_ACTIONS_SCALER_FOO}
   runners:
 machines:

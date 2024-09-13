@@ -7,8 +7,8 @@ machines:
       host: 172.18.0.100
       port: 8022
       username: abc
-      password: abc
+      password: def
     runners:
       min: 2
-      max: 2
+      max: 3
       idle_timeout: 5m

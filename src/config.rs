@@ -19,7 +19,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn try_from<T: AsRef<Path>>(config_file: T) -> Result<Self, ConfigError> {
+    pub fn try_from<T: AsRef<Path> + ?Sized>(config_file: &T) -> Result<Self, ConfigError> {
         let config_file = config_file.as_ref();
         let parsed_config: Config = match fs::read_to_string(config_file) {
             Ok(content) => match serde_yaml_ng::from_str(content.as_str()) {
@@ -263,7 +263,7 @@ pub struct MachineDefaultsConfig {
     pub runners: Option<RunnersConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct MachineConfig {
     pub id: Option<String>,
@@ -271,7 +271,7 @@ pub struct MachineConfig {
     pub runners: Option<RunnersConfig>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SshConfig {
     pub host: Option<String>,
@@ -317,7 +317,7 @@ impl fmt::Debug for SshConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RunnersConfig {
     pub min: Option<u32>,
