@@ -73,10 +73,10 @@ impl Config {
     ) -> Result<GithubConfig, ConfigError> {
         Ok(GithubConfig {
             personal_access_token: r.resolve(&c.personal_access_token)?,
-            runner: GithubRunnerConfig {
-                name_prefix: r.resolve_opt(&c.runner.name_prefix)?,
-                scope: r.resolve_opt(&c.runner.scope)?,
-                repo_url: r.resolve_opt(&c.runner.repo_url)?,
+            runners: GithubRunnerConfig {
+                name_prefix: r.resolve_opt(&c.runners.name_prefix)?,
+                scope: r.resolve_opt(&c.runners.scope)?,
+                repo_url: r.resolve_opt(&c.runners.repo_url)?,
             },
         })
 
@@ -231,7 +231,7 @@ impl LogLevel {
 #[serde(deny_unknown_fields)]
 pub struct GithubConfig {
     pub personal_access_token: String,
-    pub runner: GithubRunnerConfig,
+    pub runners: GithubRunnerConfig,
 }
 
 impl fmt::Debug for GithubConfig {
@@ -244,7 +244,7 @@ impl fmt::Debug for GithubConfig {
             write!(f, "{}...", &self.personal_access_token[..8])?
         }
 
-        write!(f, ", runner: {:?} }}", self.runner)
+        write!(f, ", runners: {:?} }}", self.runners)
     }
 }
 

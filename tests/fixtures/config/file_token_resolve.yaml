@@ -1,0 +1,4 @@
+github:
+  personal_access_token: ${file:token_file}
+  runners:
+machines:

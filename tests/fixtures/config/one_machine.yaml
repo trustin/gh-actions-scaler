@@ -1,0 +1,14 @@
+github:
+  personal_access_token: 1234567890
+  runners:
+machines:
+  - id: machine-1
+    ssh:
+      host: 172.18.0.100
+      port: 8022
+      username: abc
+      password: abc
+    runners:
+      min: 2
+      max: 2
+      idle_timeout: 5m
