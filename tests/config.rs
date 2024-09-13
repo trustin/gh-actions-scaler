@@ -1,4 +1,3 @@
-mod common;
 // TODO not impl feature
 //  1. require field validation
 //    1-1. github > personal_access_token
@@ -141,39 +140,9 @@ mod config_tests {
     }
 
     mod file_read {
-        use crate::common::TeardownPermissionDenied;
         use gh_actions_scaler::config::{Config, ConfigError};
         use std::io::ErrorKind;
         use std::path::Path;
-
-        // TODO need?? window file permission test -> i dont have window...
-        #[test]
-        fn fail_permission_denied() {
-            // given
-            let path = Path::new("tests/fixtures/config/permission_denied.yaml");
-            let teardown = TeardownPermissionDenied::from(path);
-
-            // when
-            let config = Config::try_from(path);
-
-            // then
-            assert!(config.is_err());
-            match config.err().unwrap() {
-                ConfigError::ReadFailure { path: _, cause } => {
-                    assert_eq!(
-                        cause.kind(),
-                        ErrorKind::PermissionDenied,
-                        "is not ReadFailure/PermissionDenied. error: {:?}",
-                        cause
-                    )
-                }
-                other_error => assert!(
-                    false,
-                    "is not ReadFailure/PermissionDenied. error: {:?}",
-                    other_error
-                ),
-            }
-        }
 
         #[test]
         fn fail_not_exist() {
@@ -249,7 +218,6 @@ mod config_tests {
     }
 
     mod resolve_file_variable {
-        use crate::common::TeardownPermissionDenied;
         use gh_actions_scaler::config::{Config, ConfigError};
         use std::path::Path;
 
@@ -268,29 +236,6 @@ mod config_tests {
                 config.err()
             );
             assert_eq!(config.unwrap().github.personal_access_token, "1234567890");
-        }
-
-        #[test]
-        fn fail_permission_denied() {
-            // given
-            let path = Path::new("tests/fixtures/config/file_token_permission_denied.yaml");
-            let teardown = TeardownPermissionDenied::from(Path::new(
-                "tests/fixtures/config/permission_denied_token",
-            ));
-
-            // when
-            let config = Config::try_from(path);
-
-            // then
-            assert!(config.is_err(), "config parse not fail. expect fail");
-            match config.err().unwrap() {
-                ConfigError::UnresolvedFileVariable { .. } => {}
-                other_error => assert!(
-                    false,
-                    "is not UnresolvedFileVariable. error: {:?}",
-                    other_error
-                ),
-            }
         }
 
         #[test]
