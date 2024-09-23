@@ -1,0 +1,7 @@
+github:
+  personal_access_token: 'ghp_my_secret_token'
+  runners:
+    name_prefix: ''
+    repo_url: 'https://github.com/trustin/gh-actions-scaler'
+machines:
+  - id: machine-alpha

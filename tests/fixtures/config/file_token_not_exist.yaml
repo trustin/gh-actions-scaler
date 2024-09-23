@@ -1,4 +1,0 @@
-github:
-  personal_access_token: ${file:non_existent_file}
-  runners:
-machines:

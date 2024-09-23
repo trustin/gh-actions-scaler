@@ -1,8 +1,9 @@
 github:
-  personal_access_token: 1234567890
+  personal_access_token: 'ghp_my_secret_token'
   runners:
+    repo_url: https://github.com/trustin/gh-actions-scaler
 machines:
-  - id: machine-1
+  - id: machine-alpha
     ssh:
       host: 172.18.0.100
       port: 8022

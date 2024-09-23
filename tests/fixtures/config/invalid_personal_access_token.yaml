@@ -1,0 +1,7 @@
+github:
+  # Only personal access tokens should be allowed, which starts with 'ghp_'.
+  personal_access_token: 'ghu_my_user_to_server_token'
+  runners:
+    repo_url: https://github.com/trustin/gh-actions-scaler
+machines:
+  - id: machine-alpha

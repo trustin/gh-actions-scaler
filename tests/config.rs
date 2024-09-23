@@ -3,13 +3,9 @@ extern crate scopeguard;
 
 // TODO not impl feature
 //  1. require field validation
-//    1-1. github > personal_access_token
-//    1-2. github > runners > repo_url when scope=repo
-//    1-3. machines empty -> At least one machine is required
-//    1-4. machines > id
 //    1-5. machines > ssh > host, port
 //    1-6. machines > ssh > (username, password) or (private_key, public_key)
-//  2. github > runners > default values
+//    1-7. machines > runners > min, max, idle_timeout
 
 #[cfg(test)]
 mod config_tests {
@@ -23,8 +19,8 @@ mod config_tests {
         use speculoos::prelude::*;
 
         #[test]
-        fn all_empty_field() {
-            read_config("tests/fixtures/config/empty.yaml");
+        fn minimal() {
+            read_config("tests/fixtures/config/minimal.yaml");
         }
 
         #[test]
@@ -33,7 +29,7 @@ mod config_tests {
             let machines = config.machines;
             assert_that!(machines).has_length(1);
             assert_that!(machines).contains(MachineConfig {
-                id: Some("machine-1".to_string()),
+                id: "machine-alpha".to_string(),
                 runners: Some(RunnersConfig {
                     min: Some(2),
                     max: Some(3),
@@ -53,8 +49,8 @@ mod config_tests {
 
         #[test]
         fn default_log_level() {
-            let config = read_config("tests/fixtures/config/empty.yaml");
-            assert_that!(config.log_level).contains(LogLevel::Info);
+            let config = read_config("tests/fixtures/config/minimal.yaml");
+            assert_that!(config.log_level).is_equal_to(LogLevel::Info);
         }
 
         #[test]
@@ -118,20 +114,20 @@ mod config_tests {
         #[test]
         #[serial(env_var)]
         fn success() {
-            std::env::set_var("GH_ACTIONS_SCALER_FOO", "my_secret_token");
+            std::env::set_var("GH_ACTIONS_SCALER_FOO", "ghp_my_secret_token");
             defer! {
                 std::env::remove_var("GH_ACTIONS_SCALER_FOO");
             }
 
-            let config = read_config("tests/fixtures/config/with_brace_token.yaml");
+            let config = read_config("tests/fixtures/config/env_var_substitution.yaml");
             assert_that!(config.github.personal_access_token.as_str())
-                .is_equal_to("my_secret_token");
+                .is_equal_to("ghp_my_secret_token");
         }
 
         #[test]
         #[serial(env_var)]
         fn missing_env_var() {
-            let err = read_invalid_config("tests/fixtures/config/with_brace_token.yaml");
+            let err = read_invalid_config("tests/fixtures/config/env_var_substitution.yaml");
             match err {
                 ConfigError::UnresolvedEnvironmentVariable { name, cause } => {
                     assert_that!(name.as_ref()).is_equal_to("GH_ACTIONS_SCALER_FOO");
@@ -155,13 +151,16 @@ mod config_tests {
 
         #[test]
         fn success() {
-            let config = read_config("tests/fixtures/config/file_token_resolve.yaml");
-            assert_that!(config.github.personal_access_token.as_str()).is_equal_to("1234567890");
+            let config = read_config("tests/fixtures/config/file_substitution_success.yaml");
+            assert_that!(config.github.personal_access_token.as_str())
+                .is_equal_to("ghp_my_secret_token");
         }
 
         #[test]
         fn non_existent_file() {
-            let err = read_invalid_config("tests/fixtures/config/file_token_not_exist.yaml");
+            let err = read_invalid_config(
+                "tests/fixtures/config/file_substitution_non_existent_file.yaml",
+            );
             match err {
                 ConfigError::UnresolvedFileVariable { path, cause } => {
                     assert_that!(path.as_str())
@@ -172,6 +171,129 @@ mod config_tests {
                     panic!("Unexpected: {:?} (expected: UnresolvedFileVariable)", err);
                 }
             }
+        }
+    }
+
+    mod github {
+        use crate::config_tests::read_invalid_config;
+        use gh_actions_scaler::config::ConfigError;
+        use speculoos::prelude::*;
+
+        #[test]
+        fn empty_or_missing_personal_access_token() {
+            let err = read_invalid_config(
+                "tests/fixtures/config/empty_or_missing_personal_access_token.yaml",
+            );
+            match err {
+                ConfigError::ValidationFailure { message } => {
+                    assert_that!(message.as_str()).contains("github.personal_access_token");
+                    assert_that!(message.as_str()).contains("empty or missing");
+                }
+                _ => {
+                    panic!("Unexpected: {:?} (expected: ValidationFailure)", err);
+                }
+            }
+        }
+
+        #[test]
+        fn invalid_personal_access_token() {
+            let err =
+                read_invalid_config("tests/fixtures/config/invalid_personal_access_token.yaml");
+            match err {
+                ConfigError::ValidationFailure { message } => {
+                    assert_that!(message.as_str()).contains("github.personal_access_token");
+                    assert_that!(message.as_str()).contains("invalid");
+                }
+                _ => {
+                    panic!("Unexpected: {:?} (expected: ValidationFailure)", err);
+                }
+            }
+        }
+
+        #[test]
+        fn empty_name_prefix() {
+            let err = read_invalid_config("tests/fixtures/config/empty_name_prefix.yaml");
+            match err {
+                ConfigError::ValidationFailure { message } => {
+                    assert_that!(message.as_str()).contains("github.runners.name_prefix");
+                    assert_that!(message.as_str()).contains("empty");
+                }
+                _ => {
+                    panic!("Unexpected: {:?} (expected: ValidationFailure)", err);
+                }
+            }
+        }
+
+        #[test]
+        fn empty_or_missing_repo_url() {
+            let err = read_invalid_config("tests/fixtures/config/empty_or_missing_repo_url.yaml");
+            match err {
+                ConfigError::ValidationFailure { message } => {
+                    assert_that!(message.as_str()).contains("github.runners.repo_url");
+                    assert_that!(message.as_str()).contains("empty or missing");
+                }
+                _ => {
+                    panic!("Unexpected: {:?} (expected: ValidationFailure)", err);
+                }
+            }
+        }
+
+        #[test]
+        fn invalid_repo_url() {
+            let err = read_invalid_config("tests/fixtures/config/invalid_repo_url.yaml");
+            match err {
+                ConfigError::ValidationFailure { message } => {
+                    assert_that!(message.as_str()).contains("github.runners.repo_url");
+                    assert_that!(message.as_str()).contains("invalid");
+                }
+                _ => {
+                    panic!("Unexpected: {:?} (expected: ValidationFailure)", err);
+                }
+            }
+        }
+    }
+
+    mod machines {
+        use crate::config_tests::read_config;
+        use crate::config_tests::read_invalid_config;
+        use gh_actions_scaler::config::ConfigError;
+        use speculoos::prelude::*;
+
+        #[test]
+        fn empty_machines() {
+            let err = read_invalid_config("tests/fixtures/config/empty_machines.yaml");
+            match err {
+                ConfigError::ValidationFailure { message } => {
+                    assert_that!(message.as_str()).contains("at least one machine");
+                }
+                _ => {
+                    panic!("Unexpected: {:?} (expected: ValidationFailure)", err);
+                }
+            }
+        }
+        #[test]
+        fn duplicate_machine_id() {
+            let err = read_invalid_config("tests/fixtures/config/duplicate_machine_id.yaml");
+            match err {
+                ConfigError::ValidationFailure { message } => {
+                    assert_that!(message.as_str()).contains("duplicate machine ID");
+                    assert_that!(message.as_str()).contains("'machine-alpha'");
+                }
+                _ => {
+                    panic!("Unexpected: {:?} (expected: ValidationFailure)", err);
+                }
+            }
+        }
+
+        #[test]
+        fn generated_machine_id() {
+            let config = read_config("tests/fixtures/config/generated_machine_id.yaml");
+            let machines = &config.machines;
+            assert_that!(machines).has_length(4);
+            assert_that!(machines[0].id.as_str()).is_equal_to("machine-1");
+            assert_that!(machines[1].id.as_str()).is_equal_to("machine-2");
+            assert_that!(machines[2].id.as_str()).is_equal_to("machine-3");
+            assert_that!(machines[3].id.as_str()).is_equal_to("machine-4");
         }
     }
 

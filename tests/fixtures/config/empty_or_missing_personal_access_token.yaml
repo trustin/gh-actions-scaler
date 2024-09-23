@@ -1,0 +1,7 @@
+github:
+  # An empty access token should be rejected.
+  personal_access_token: ''
+  runners:
+    repo_url: https://github.com/trustin/gh-actions-scaler
+machines:
+  - id: machine-alpha

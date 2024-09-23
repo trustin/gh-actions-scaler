@@ -83,12 +83,16 @@ fn main() {
                 error!("Failed to resolve an external file: {} ({})", path, cause);
                 exit(1);
             }
+            ConfigError::ValidationFailure { message } => {
+                error!("Invalid configuration: {}", message);
+                exit(1);
+            }
         },
     };
 
     // Use the log level specified in the configuration file, if CLI log level was not specified.
     if cli.log_level.is_none() {
-        log::set_max_level(config.log_level.unwrap().to_level_filter());
+        log::set_max_level(config.log_level.to_level_filter());
     }
 
     debug!("Deserialized configuration: {:?}", config);

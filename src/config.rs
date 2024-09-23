@@ -5,6 +5,7 @@ use clap::ValueEnum;
 use log::LevelFilter;
 use serde::Deserialize;
 use std::cmp::max;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{env, fmt, fs, io};
@@ -12,7 +13,8 @@ use std::{env, fmt, fs, io};
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    pub log_level: Option<LogLevel>,
+    #[serde(default = "default_log_level")]
+    pub log_level: LogLevel,
     pub github: GithubConfig,
     pub machine_defaults: Option<MachineDefaultsConfig>,
     pub machines: Vec<MachineConfig>,
@@ -56,7 +58,7 @@ impl Config {
             &resolver,
         )?;
         Ok(Config {
-            log_level: parsed_config.log_level.or(Some(LogLevel::Info)),
+            log_level: parsed_config.log_level,
             github: Self::resolve_github_config(&parsed_config.github, &resolver)?,
             machines: Self::resolve_machine_configs(
                 resolved_machine_defaults.as_ref(),
@@ -71,16 +73,53 @@ impl Config {
         c: &GithubConfig,
         r: &ConfigResolver,
     ) -> Result<GithubConfig, ConfigError> {
-        Ok(GithubConfig {
+        let config = GithubConfig {
             personal_access_token: r.resolve(&c.personal_access_token)?,
             runners: GithubRunnerConfig {
-                name_prefix: r.resolve_opt(&c.runners.name_prefix)?,
-                scope: r.resolve_opt(&c.runners.scope)?,
-                repo_url: r.resolve_opt(&c.runners.repo_url)?,
+                name_prefix: r.resolve(&c.runners.name_prefix)?,
+                scope: r.resolve(&c.runners.scope)?,
+                repo_url: r.resolve(&c.runners.repo_url)?,
             },
-        })
+        };
 
-        // TODO Validate the configuration.
+        // Validate the personal access token.
+        if config.personal_access_token.is_empty() {
+            return Err(ConfigError::ValidationFailure {
+                message: "An empty or missing value in 'github.personal_access_token'. A GitHub personal access token must start with 'ghp_'.".to_string(),
+            });
+        }
+        if !config.personal_access_token.starts_with("ghp_") {
+            return Err(ConfigError::ValidationFailure {
+                message: "An invalid value in 'github.personal_access_token'. A GitHub personal access token must start with 'ghp_'.".to_string(),
+            });
+        }
+
+        // Validate runner config.
+        if config.runners.name_prefix.is_empty() {
+            return Err(ConfigError::ValidationFailure {
+                message: "An empty value in 'github.runners.name_prefix'.".to_string(),
+            });
+        }
+
+        if config.runners.scope != "repo" {
+            return Err(ConfigError::ValidationFailure {
+                message: format!("An unsupported value '{}' in 'github.runners.scope'. 'repo' is the only supported value at the moment.", config.runners.scope)
+            });
+        }
+
+        let repo_url = &config.runners.repo_url;
+        if repo_url.is_empty() {
+            return Err(ConfigError::ValidationFailure {
+                message: "An empty or missing URL in 'github.runners.repo_url'.".to_string(),
+            });
+        }
+        if !repo_url.starts_with("http://") && !repo_url.starts_with("https://") {
+            return Err(ConfigError::ValidationFailure {
+                message: format!("An invalid URL '{}' in github.runners.repo_url.", repo_url),
+            });
+        }
+
+        Ok(config)
     }
 
     fn resolve_machine_defaults_config(
@@ -102,11 +141,12 @@ impl Config {
         r: &ConfigResolver,
     ) -> Result<Vec<MachineConfig>, ConfigError> {
         let mut out: Vec<MachineConfig> = vec![];
+        let mut id_generator = MachineIdGenerator::new(cfgs)?;
         match defaults {
             Some(d) => {
                 for c in cfgs {
                     out.push(MachineConfig {
-                        id: r.resolve_opt(&c.id)?,
+                        id: id_generator.generate(c, r)?,
                         ssh: Self::resolve_ssh_config(d.ssh.as_ref(), c.ssh.as_ref(), r)?,
                         runners: Self::resolve_runners_config(
                             d.runners.as_ref(),
@@ -119,7 +159,7 @@ impl Config {
             None => {
                 for c in cfgs {
                     out.push(MachineConfig {
-                        id: r.resolve_opt(&c.id)?,
+                        id: id_generator.generate(c, r)?,
                         ssh: Self::resolve_ssh_config(None, c.ssh.as_ref(), r)?,
                         runners: Self::resolve_runners_config(None, c.runners.as_ref(), r)?,
                     })
@@ -127,7 +167,14 @@ impl Config {
             }
         }
 
-        Ok(out)
+        if out.is_empty() {
+            Err(ConfigError::ValidationFailure {
+                message: "There must be at least one machine in the configuration.".to_string(),
+            })
+        } else {
+            out.sort_by(|a, b| a.id.cmp(&b.id));
+            Ok(out)
+        }
     }
 
     fn resolve_ssh_config(
@@ -230,6 +277,7 @@ impl LogLevel {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GithubConfig {
+    #[serde(default)]
     pub personal_access_token: String,
     pub runners: GithubRunnerConfig,
 }
@@ -251,9 +299,12 @@ impl fmt::Debug for GithubConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GithubRunnerConfig {
-    pub name_prefix: Option<String>,
-    pub scope: Option<String>,
-    pub repo_url: Option<String>,
+    #[serde(default = "default_github_runner_name_prefix")]
+    pub name_prefix: String,
+    #[serde(default = "default_github_runner_scope")]
+    pub scope: String,
+    #[serde(default)]
+    pub repo_url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -266,7 +317,8 @@ pub struct MachineDefaultsConfig {
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct MachineConfig {
-    pub id: Option<String>,
+    #[serde(default)]
+    pub id: String,
     pub ssh: Option<SshConfig>,
     pub runners: Option<RunnersConfig>,
 }
@@ -325,6 +377,54 @@ pub struct RunnersConfig {
     pub idle_timeout: Option<String>,
 }
 
+struct MachineIdGenerator {
+    id_set: HashSet<String>,
+    next_id: usize,
+}
+
+impl MachineIdGenerator {
+    fn new<'a, T>(cfgs: &'a T) -> Result<MachineIdGenerator, ConfigError>
+    where
+        &'a T: IntoIterator<Item = &'a MachineConfig>,
+    {
+        let mut id_set = HashSet::<String>::new();
+        for c in cfgs {
+            if c.id.is_empty() {
+                continue;
+            }
+            if !id_set.insert(c.id.clone()) {
+                return Err(ConfigError::ValidationFailure {
+                    message: format!("A duplicate machine ID '{}' was found.", c.id),
+                });
+            }
+        }
+        Ok(MachineIdGenerator { id_set, next_id: 1 })
+    }
+
+    fn generate(
+        &mut self,
+        cfg: &MachineConfig,
+        resolver: &ConfigResolver,
+    ) -> Result<String, ConfigError> {
+        let specified_id = resolver.resolve(&cfg.id)?;
+        // Use the specified ID if possible.
+        if !specified_id.is_empty() {
+            return Ok(specified_id);
+        }
+
+        // Generate a new ID otherwise.
+        loop {
+            let id = format!("machine-{}", self.next_id);
+            if self.id_set.contains(&id) {
+                self.next_id += 1;
+            } else {
+                self.id_set.insert(id.clone());
+                return Ok(id);
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ConfigError {
     ReadFailure {
@@ -343,4 +443,21 @@ pub enum ConfigError {
         path: String,
         cause: io::Error,
     },
+    ValidationFailure {
+        message: String,
+    },
+}
+
+// Default value functions for serde
+
+fn default_log_level() -> LogLevel {
+    LogLevel::Info
+}
+
+fn default_github_runner_name_prefix() -> String {
+    "runner".to_string()
+}
+
+fn default_github_runner_scope() -> String {
+    "repo".to_string()
 }

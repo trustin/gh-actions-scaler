@@ -1,0 +1,11 @@
+github:
+  personal_access_token: 'ghp_my_secret_token'
+  runners:
+    repo_url: https://github.com/trustin/gh-actions-scaler
+machines:
+  - id: machine-1
+  - ssh: # Generated machine ID should be 'machine-3' because 'machine-1' and 'machine-2' are occupied.
+      host: 172.18.0.100
+  - id: machine-2
+  - ssh: # Generated machine ID should be 'machine-4'.
+      host: 172.18.0.101
