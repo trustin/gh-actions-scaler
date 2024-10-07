@@ -18,13 +18,19 @@ impl<P: AsRef<Path>> From<P> for ConfigResolver {
 }
 
 impl ConfigResolver {
-    pub fn resolve_opt<STR: AsRef<str>>(
+    pub fn resolve_or_else<STR, ELSE>(
         &self,
-        input: &Option<STR>,
-    ) -> Result<Option<String>, ConfigError> {
-        match input {
-            Some(value) => Ok(Some(self.resolve(value)?)),
-            None => Ok(None),
+        input: STR,
+        else_fn: ELSE,
+    ) -> Result<String, ConfigError>
+    where
+        STR: AsRef<str>,
+        ELSE: FnOnce() -> Result<String, ConfigError>,
+    {
+        if input.as_ref().is_empty() {
+            self.resolve(else_fn()?)
+        } else {
+            self.resolve(input)
         }
     }
 

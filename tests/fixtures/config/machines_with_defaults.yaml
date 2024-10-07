@@ -1,0 +1,28 @@
+github:
+  personal_access_token: 'ghp_my_secret_token'
+  runners:
+    repo_url: https://github.com/trustin/gh-actions-scaler
+
+machine_defaults:
+  ssh:
+    host: default_host
+    port: 8022
+    username: default_username
+    password: default_password
+    private_key: default_private_key
+    private_key_passphrase: default_private_key_passphrase
+
+machines:
+  - id: machine-alpha
+  - id: machine-beta
+    ssh:
+      host: 172.18.0.101
+      port: 10022
+      fingerprint: "12:34:56:78:9a:bc:de:f0:11:22:33:44:55:66:77:88"
+      username: abc
+      password: def
+  - id: machine-theta
+    ssh:
+      host: 172.18.0.102
+      private_key: ghi
+      private_key_passphrase: jkl

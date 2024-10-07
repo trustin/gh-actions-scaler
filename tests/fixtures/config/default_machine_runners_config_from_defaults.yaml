@@ -2,14 +2,14 @@ github:
   personal_access_token: 'ghp_my_secret_token'
   runners:
     repo_url: https://github.com/trustin/gh-actions-scaler
+
+machine_defaults:
+  runners:
+    max: 8
+
 machines:
   - id: machine-alpha
     ssh:
-      host: 172.18.0.100
-      port: 8022
-      username: abc
-      password: def
-    runners:
-      min: 2
-      max: 3
-      idle_timeout: 5m
+      host: alpha.example.tld
+      username: trustin
+      password: my_secret_password

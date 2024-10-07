@@ -2,21 +2,23 @@ mod resolver;
 
 use crate::config::resolver::ConfigResolver;
 use clap::ValueEnum;
+use log::warn;
 use log::LevelFilter;
 use serde::Deserialize;
-use std::cmp::max;
 use std::collections::HashSet;
+use std::fmt::{Debug, Formatter};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{env, fmt, fs, io};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    #[serde(default = "default_log_level")]
+    #[serde(default)]
     pub log_level: LogLevel,
     pub github: GithubConfig,
-    pub machine_defaults: Option<MachineDefaultsConfig>,
+    #[serde(default)]
+    pub machine_defaults: MachineDefaultsConfig,
     pub machines: Vec<MachineConfig>,
 }
 
@@ -53,15 +55,13 @@ impl Config {
 impl Config {
     fn resolve_config(config_dir: &PathBuf, parsed_config: &Config) -> Result<Config, ConfigError> {
         let resolver = resolver::ConfigResolver::from(&config_dir);
-        let resolved_machine_defaults = Self::resolve_machine_defaults_config(
-            parsed_config.machine_defaults.as_ref(),
-            &resolver,
-        )?;
+        let resolved_machine_defaults =
+            Self::resolve_machine_defaults_config(&parsed_config.machine_defaults, &resolver)?;
         Ok(Config {
             log_level: parsed_config.log_level,
             github: Self::resolve_github_config(&parsed_config.github, &resolver)?,
             machines: Self::resolve_machine_configs(
-                resolved_machine_defaults.as_ref(),
+                &resolved_machine_defaults,
                 &parsed_config.machines,
                 &resolver,
             )?,
@@ -123,48 +123,46 @@ impl Config {
     }
 
     fn resolve_machine_defaults_config(
-        c: Option<&MachineDefaultsConfig>,
+        c: &MachineDefaultsConfig,
         r: &ConfigResolver,
-    ) -> Result<Option<MachineDefaultsConfig>, ConfigError> {
-        Ok(match c {
-            Some(c) => Some(MachineDefaultsConfig {
-                ssh: Self::resolve_ssh_config(None, c.ssh.as_ref(), r)?,
-                runners: Self::resolve_runners_config(None, c.runners.as_ref(), r)?,
-            }),
-            None => None,
+    ) -> Result<MachineDefaultsConfig, ConfigError> {
+        Ok(MachineDefaultsConfig {
+            ssh: Self::resolve_default_ssh_config(&c.ssh, r)?,
+            runners: RunnersConfig { max: c.runners.max },
+        })
+    }
+
+    fn resolve_default_ssh_config(
+        c: &SshConfig,
+        r: &ConfigResolver,
+    ) -> Result<SshConfig, ConfigError> {
+        if !c.fingerprint.is_empty() {
+            warn!("'fingerprint' in 'machine_defaults' will be ignored.");
+        }
+
+        Ok(SshConfig {
+            host: r.resolve(&c.host)?,
+            port: c.port,
+            fingerprint: "".to_string(),
+            username: r.resolve(&c.username)?,
+            password: r.resolve(&c.password)?,
+            private_key: r.resolve(&c.private_key)?,
+            private_key_passphrase: r.resolve(&c.private_key_passphrase)?,
         })
     }
 
     fn resolve_machine_configs(
-        defaults: Option<&MachineDefaultsConfig>,
+        defaults: &MachineDefaultsConfig,
         cfgs: &Vec<MachineConfig>,
         r: &ConfigResolver,
     ) -> Result<Vec<MachineConfig>, ConfigError> {
         let mut out: Vec<MachineConfig> = vec![];
         let mut id_generator = MachineIdGenerator::new(cfgs)?;
-        match defaults {
-            Some(d) => {
-                for c in cfgs {
-                    out.push(MachineConfig {
-                        id: id_generator.generate(c, r)?,
-                        ssh: Self::resolve_ssh_config(d.ssh.as_ref(), c.ssh.as_ref(), r)?,
-                        runners: Self::resolve_runners_config(
-                            d.runners.as_ref(),
-                            c.runners.as_ref(),
-                            r,
-                        )?,
-                    })
-                }
-            }
-            None => {
-                for c in cfgs {
-                    out.push(MachineConfig {
-                        id: id_generator.generate(c, r)?,
-                        ssh: Self::resolve_ssh_config(None, c.ssh.as_ref(), r)?,
-                        runners: Self::resolve_runners_config(None, c.runners.as_ref(), r)?,
-                    })
-                }
-            }
+        for c in cfgs {
+            let id = id_generator.generate(c, r)?;
+            let ssh = Self::resolve_ssh_config(&id, &defaults.ssh, &c.ssh, r)?;
+            let runners = Self::resolve_runners_config(&defaults.runners, &c.runners)?;
+            out.push(MachineConfig { id, ssh, runners })
         }
 
         if out.is_empty() {
@@ -178,85 +176,120 @@ impl Config {
     }
 
     fn resolve_ssh_config(
-        defaults: Option<&SshConfig>,
-        c: Option<&SshConfig>,
+        machine_id: &str,
+        defaults: &SshConfig,
+        c: &SshConfig,
         r: &ConfigResolver,
-    ) -> Result<Option<SshConfig>, ConfigError> {
-        Ok(match c {
-            Some(c) => Some(SshConfig {
-                host: r
-                    .resolve_opt(&c.host)?
-                    .or(defaults.and_then(|d| d.host.clone())),
-                port: c.port.or(defaults.and_then(|d| d.port)).or(Some(22)),
-                fingerprint: r
-                    .resolve_opt(&c.fingerprint)?
-                    .or(defaults.and_then(|d| d.fingerprint.clone())),
-                username: r
-                    .resolve_opt(&c.username)?
-                    .or(defaults.and_then(|d| d.username.clone()))
-                    .or(Some(whoami::username())),
-                password: r
-                    .resolve_opt(&c.password)?
-                    .or(defaults.and_then(|d| d.password.clone())),
-                private_key: r
-                    .resolve_opt(&c.private_key)?
-                    .or(defaults.and_then(|d| d.private_key.clone())),
-                private_key_passphrase: r
-                    .resolve_opt(&c.private_key_passphrase)?
-                    .or(defaults.and_then(|d| d.private_key_passphrase.clone())),
-            }),
-            None => None, // TODO: Reject
-        })
+    ) -> Result<SshConfig, ConfigError> {
+        // Choose the password or private key in the following order of preferences:
+        // 1) A per-machine private key
+        // 2) A per-machine password
+        // 3) The default private key
+        // 4) The default password
+        let password_or_private_key: (&str, &str, &str) = {
+            if !c.private_key.is_empty() {
+                if !c.password.is_empty() {
+                    warn!(
+                        "'password' will be ignored for machine '{}' in favor of 'private_key'.",
+                        machine_id
+                    );
+                }
+                (
+                    "",
+                    c.private_key.as_str(),
+                    c.private_key_passphrase.as_str(),
+                )
+            } else if !c.password.is_empty() {
+                (c.password.as_str(), "", "")
+            } else if !defaults.private_key.is_empty() {
+                (
+                    "",
+                    defaults.private_key.as_str(),
+                    defaults.private_key_passphrase.as_str(),
+                )
+            } else {
+                (defaults.password.as_str(), "", "")
+            }
+        };
 
-        // TODO Validate the configuration.
+        let resolved = SshConfig {
+            host: r.resolve_or_else(&c.host, || {
+                let fallback = defaults.host.clone();
+                if fallback.is_empty() {
+                    Err(ConfigError::ValidationFailure {
+                        message: format!("'host' must be specified for machine '{}'.", machine_id),
+                    })
+                } else {
+                    Ok(fallback)
+                }
+            })?,
+            port: if c.port != 0 {
+                c.port
+            } else if defaults.port != 0 {
+                defaults.port
+            } else {
+                22
+            },
+            // Don't look up the defaults because every machine has its own fingerprint.
+            fingerprint: r.resolve(&c.fingerprint)?,
+            username: r.resolve_or_else(&c.username, || {
+                let fallback = defaults.username.clone();
+                if fallback.is_empty() {
+                    Err(ConfigError::ValidationFailure {
+                        message: format!(
+                            "'username' must be specified for machine '{}'.",
+                            machine_id
+                        ),
+                    })
+                } else {
+                    Ok(fallback)
+                }
+            })?,
+            password: r.resolve(password_or_private_key.0)?,
+            private_key: r.resolve(password_or_private_key.1)?,
+            private_key_passphrase: r.resolve(password_or_private_key.2)?,
+        };
+
+        // Ensure password or private key is specified.
+        if resolved.password.is_empty() && resolved.private_key.is_empty() {
+            return Err(ConfigError::ValidationFailure {
+                message: format!(
+                    "'password' or 'private_key' must be specified for machine '{}'.",
+                    machine_id
+                ),
+            });
+        }
+
+        Ok(resolved)
     }
 
     fn resolve_runners_config(
-        defaults: Option<&RunnersConfig>,
-        c: Option<&RunnersConfig>,
-        r: &ConfigResolver,
-    ) -> Result<Option<RunnersConfig>, ConfigError> {
-        let default_min_runners = 1;
+        defaults: &RunnersConfig,
+        c: &RunnersConfig,
+    ) -> Result<RunnersConfig, ConfigError> {
         let default_max_runners = 16;
-        let default_idle_timeout = "1m";
-
-        Ok(match c {
-            Some(c) => {
-                let min_runners = c.min.or(defaults.and_then(|d| d.min)).unwrap_or(1);
-                let max_runners = c
-                    .max
-                    .or(defaults.and_then(|d| d.max))
-                    .unwrap_or_else(|| max(min_runners, default_max_runners));
-
-                Some(RunnersConfig {
-                    min: Some(min_runners),
-                    max: Some(max_runners),
-                    idle_timeout: Some(
-                        r.resolve_opt(&c.idle_timeout)?
-                            .or(defaults.and_then(|d| d.idle_timeout.clone()))
-                            .unwrap_or_else(|| default_idle_timeout.to_string()),
-                    ),
-                })
-            }
-            None => Some(RunnersConfig {
-                min: Some(default_min_runners),
-                max: Some(default_max_runners),
-                idle_timeout: Some(default_idle_timeout.to_string()),
-            }),
+        Ok(RunnersConfig {
+            max: if c.max != 0 {
+                c.max
+            } else if defaults.max != 0 {
+                defaults.max
+            } else {
+                default_max_runners
+            },
         })
-
-        // TODO Validate the configuration.
     }
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub enum LogLevel {
     #[serde(rename = "trace")]
     Trace,
     #[serde(rename = "debug")]
     Debug,
     #[serde(rename = "info")]
+    #[default]
     Info,
     #[serde(rename = "warn")]
     Warn,
@@ -274,7 +307,7 @@ impl LogLevel {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GithubConfig {
     #[serde(default)]
@@ -282,21 +315,19 @@ pub struct GithubConfig {
     pub runners: GithubRunnerConfig,
 }
 
-impl fmt::Debug for GithubConfig {
+impl Debug for GithubConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "GithubConfig {{ personal_access_token: ")?;
-
-        if self.personal_access_token.len() < 8 {
-            write!(f, "[REDACTED]")?
-        } else {
-            write!(f, "{}...", &self.personal_access_token[..8])?
-        }
-
-        write!(f, ", runners: {:?} }}", self.runners)
+        f.debug_struct("GithubConfig")
+            .field(
+                "personal_access_token",
+                mask_credential(&self.personal_access_token),
+            )
+            .field("runners", &self.runners)
+            .finish()
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GithubRunnerConfig {
     #[serde(default = "default_github_runner_name_prefix")]
@@ -307,11 +338,14 @@ pub struct GithubRunnerConfig {
     pub repo_url: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct MachineDefaultsConfig {
-    pub ssh: Option<SshConfig>,
-    pub runners: Option<RunnersConfig>,
+    #[serde(default)]
+    pub ssh: SshConfig,
+    #[serde(default)]
+    pub runners: RunnersConfig,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -319,62 +353,68 @@ pub struct MachineDefaultsConfig {
 pub struct MachineConfig {
     #[serde(default)]
     pub id: String,
-    pub ssh: Option<SshConfig>,
-    pub runners: Option<RunnersConfig>,
+    #[serde(default)]
+    pub ssh: SshConfig,
+    #[serde(default)]
+    pub runners: RunnersConfig,
 }
 
 #[derive(Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SshConfig {
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub fingerprint: Option<String>,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub private_key: Option<String>,
-    pub private_key_passphrase: Option<String>,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default)]
+    pub port: u16,
+    #[serde(default)]
+    pub fingerprint: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default)]
+    pub private_key: String,
+    #[serde(default)]
+    pub private_key_passphrase: String,
 }
 
-impl fmt::Debug for SshConfig {
+impl Default for SshConfig {
+    fn default() -> Self {
+        SshConfig {
+            host: "".to_string(),
+            port: 0,
+            fingerprint: "".to_string(),
+            username: "".to_string(),
+            password: "".to_string(),
+            private_key: "".to_string(),
+            private_key_passphrase: "".to_string(),
+        }
+    }
+}
+
+impl Debug for SshConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "SshConfig {{ host: {:?}, port: {:?}, fingerprint: {:?}, username: {:?}, password: {}, ",
-            self.host, self.port, self.fingerprint, self.username,
-            match self.password {
-                Some(_) => "[REDACTED]",
-                None => "None",
-            })?;
-
-        write!(f, "private_key: ")?;
-        match &self.private_key {
-            Some(key) => {
-                if key.len() < 16 {
-                    write!(f, "[REDACTED]")?
-                } else {
-                    write!(f, "{}...", &key[..16])?
-                }
-            }
-            None => write!(f, "None")?,
-        };
-
-        write!(
-            f,
-            ", private_key_passphrase: {} }}",
-            match self.private_key_passphrase {
-                Some(_) => "[REDACTED]",
-                None => "None",
-            }
-        )
+        f.debug_struct("SshConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("fingerprint", &self.fingerprint)
+            .field("username", &self.username)
+            .field("password", mask_credential(&self.password))
+            .field("private_key", mask_credential(&self.private_key))
+            .field(
+                "private_key_passphrase",
+                mask_credential(&self.private_key_passphrase),
+            )
+            .finish()
     }
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct RunnersConfig {
-    pub min: Option<u32>,
-    pub max: Option<u32>,
-    pub idle_timeout: Option<String>,
+    #[serde(default)]
+    pub max: u32,
 }
 
 struct MachineIdGenerator {
@@ -448,11 +488,34 @@ pub enum ConfigError {
     },
 }
 
-// Default value functions for serde
-
-fn default_log_level() -> LogLevel {
-    LogLevel::Info
+fn mask_credential(value: &str) -> &dyn Debug {
+    if value.is_empty() {
+        &""
+    } else {
+        &"[REDACTED]"
+    }
 }
+
+// TODO: Use field_with() and write_masked_credential_with_preview() when field_with() becomes stable.
+//       https://github.com/rust-lang/rust/issues/117729
+// e.g.
+// formatter
+//   .debug_struct("GithubConfig")
+//   .field_with("personal_access_token", |f| write_masked_credential_with_preview(f, ...))
+//   .finish()
+//
+#[allow(dead_code)]
+fn write_masked_credential_with_preview(f: &mut Formatter, value: &str) -> fmt::Result {
+    if value.is_empty() {
+        f.write_str("[UNSPECIFIED]")
+    } else if value.len() < 8 {
+        f.write_str("[REDACTED]")
+    } else {
+        f.write_str(&value[..8])
+    }
+}
+
+// Default value functions for serde
 
 fn default_github_runner_name_prefix() -> String {
     "runner".to_string()

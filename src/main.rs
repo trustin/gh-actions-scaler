@@ -40,8 +40,6 @@ fn main() {
         }
     });
 
-    // TODO: Parse the configuration file into the config object.
-
     pretty_env_logger::formatted_timed_builder()
         .default_format()
         .format_module_path(false)
@@ -95,5 +93,5 @@ fn main() {
         log::set_max_level(config.log_level.to_level_filter());
     }
 
-    debug!("Deserialized configuration: {:?}", config);
+    debug!("Deserialized configuration: {:#?}", config);
 }

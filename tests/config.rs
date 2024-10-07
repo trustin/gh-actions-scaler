@@ -1,12 +1,6 @@
 #[macro_use(defer)]
 extern crate scopeguard;
 
-// TODO not impl feature
-//  1. require field validation
-//    1-5. machines > ssh > host, port
-//    1-6. machines > ssh > (username, password) or (private_key, public_key)
-//    1-7. machines > runners > min, max, idle_timeout
-
 #[cfg(test)]
 mod config_tests {
     use gh_actions_scaler::config::{Config, ConfigError};
@@ -15,35 +9,51 @@ mod config_tests {
 
     mod success {
         use crate::config_tests::read_config;
-        use gh_actions_scaler::config::{LogLevel, MachineConfig, RunnersConfig, SshConfig};
+        use gh_actions_scaler::config::{
+            Config, GithubConfig, GithubRunnerConfig, LogLevel, MachineConfig,
+            MachineDefaultsConfig, RunnersConfig, SshConfig,
+        };
         use speculoos::prelude::*;
 
         #[test]
         fn minimal() {
-            read_config("tests/fixtures/config/minimal.yaml");
-        }
+            let config = read_config("tests/fixtures/config/minimal.yaml");
 
-        #[test]
-        fn one_machine() {
-            let config = read_config("tests/fixtures/config/one_machine.yaml");
-            let machines = config.machines;
-            assert_that!(machines).has_length(1);
-            assert_that!(machines).contains(MachineConfig {
-                id: "machine-alpha".to_string(),
-                runners: Some(RunnersConfig {
-                    min: Some(2),
-                    max: Some(3),
-                    idle_timeout: Some("5m".to_string()),
-                }),
-                ssh: Some(SshConfig {
-                    host: Some("172.18.0.100".to_string()),
-                    port: Some(8022),
-                    fingerprint: None,
-                    username: Some("abc".to_string()),
-                    password: Some("def".to_string()),
-                    private_key: None,
-                    private_key_passphrase: None,
-                }),
+            assert_that!(config).is_equal_to(Config {
+                log_level: LogLevel::Info,
+                github: GithubConfig {
+                    personal_access_token: "ghp_my_secret_token".to_string(),
+                    runners: GithubRunnerConfig {
+                        name_prefix: "runner".to_string(),
+                        scope: "repo".to_string(),
+                        repo_url: "https://github.com/trustin/gh-actions-scaler".to_string(),
+                    },
+                },
+                machine_defaults: MachineDefaultsConfig {
+                    ssh: SshConfig {
+                        host: "".to_string(),
+                        port: 0,
+                        fingerprint: "".to_string(),
+                        username: "".to_string(),
+                        password: "".to_string(),
+                        private_key: "".to_string(),
+                        private_key_passphrase: "".to_string(),
+                    },
+                    runners: RunnersConfig { max: 0 },
+                },
+                machines: vec![MachineConfig {
+                    id: "machine-1".to_string(),
+                    runners: RunnersConfig { max: 16 },
+                    ssh: SshConfig {
+                        host: "alpha.example.tld".to_string(),
+                        port: 22,
+                        fingerprint: "".to_string(),
+                        username: "trustin".to_string(),
+                        password: "my_secret_password".to_string(),
+                        private_key: "".to_string(),
+                        private_key_passphrase: "".to_string(),
+                    },
+                }],
             });
         }
 
@@ -58,11 +68,7 @@ mod config_tests {
             let config = read_config("tests/fixtures/config/default_runners_config.yaml");
             let machines = &config.machines;
             assert_that!(machines).has_length(1);
-            assert_that!(machines[0].runners).is_equal_to(Some(RunnersConfig {
-                min: Some(1),
-                max: Some(16),
-                idle_timeout: Some("1m".to_string()),
-            }));
+            assert_that!(machines[0].runners).is_equal_to(RunnersConfig { max: 16 });
         }
     }
 
@@ -256,7 +262,7 @@ mod config_tests {
     mod machines {
         use crate::config_tests::read_config;
         use crate::config_tests::read_invalid_config;
-        use gh_actions_scaler::config::ConfigError;
+        use gh_actions_scaler::config::{ConfigError, MachineConfig, RunnersConfig, SshConfig};
         use speculoos::prelude::*;
 
         #[test]
@@ -294,6 +300,132 @@ mod config_tests {
             assert_that!(machines[1].id.as_str()).is_equal_to("machine-2");
             assert_that!(machines[2].id.as_str()).is_equal_to("machine-3");
             assert_that!(machines[3].id.as_str()).is_equal_to("machine-4");
+        }
+
+        #[test]
+        fn machines_without_defaults() {
+            let config = read_config("tests/fixtures/config/machines_without_defaults.yaml");
+            let machines = config.machines;
+            assert_that!(machines).is_equal_to(vec![
+                MachineConfig {
+                    id: "machine-alpha".to_string(),
+                    ssh: SshConfig {
+                        host: "172.18.0.100".to_string(),
+                        port: 8022,
+                        fingerprint: "12:34:56:78:9a:bc:de:f0:11:22:33:44:55:66:77:88".to_string(),
+                        username: "abc".to_string(),
+                        password: "def".to_string(),
+                        private_key: "".to_string(),
+                        // Must be ignored because using password auth
+                        private_key_passphrase: "".to_string(),
+                    },
+                    runners: RunnersConfig { max: 3 },
+                },
+                MachineConfig {
+                    id: "machine-beta".to_string(),
+                    ssh: SshConfig {
+                        host: "172.18.0.101".to_string(),
+                        port: 22,
+                        fingerprint: "".to_string(),
+                        username: "ghi".to_string(),
+                        password: "".to_string(),
+                        private_key: "jkl".to_string(),
+                        private_key_passphrase: "mno".to_string(),
+                    },
+                    runners: RunnersConfig { max: 16 },
+                },
+                MachineConfig {
+                    id: "machine-theta".to_string(),
+                    ssh: SshConfig {
+                        host: "172.18.0.102".to_string(),
+                        port: 22,
+                        fingerprint: "".to_string(),
+                        username: "pqr".to_string(),
+                        // Must be ignored because using private key auth
+                        password: "".to_string(),
+                        private_key: "stu".to_string(),
+                        private_key_passphrase: "vwx".to_string(),
+                    },
+                    runners: RunnersConfig { max: 16 },
+                },
+            ]);
+        }
+
+        #[test]
+        fn machines_with_defaults() {
+            let config = read_config("tests/fixtures/config/machines_with_defaults.yaml");
+            let machines = config.machines;
+            assert_that!(machines).is_equal_to(vec![
+                MachineConfig {
+                    id: "machine-alpha".to_string(),
+                    ssh: SshConfig {
+                        host: "default_host".to_string(),
+                        port: 8022,
+                        fingerprint: "".to_string(),
+                        username: "default_username".to_string(),
+                        // The default password must be ignored,
+                        // because the default private key was specified *and* no per-machine auth was configured.
+                        password: "".to_string(),
+                        private_key: "default_private_key".to_string(),
+                        private_key_passphrase: "default_private_key_passphrase".to_string(),
+                    },
+                    runners: RunnersConfig { max: 16 },
+                },
+                MachineConfig {
+                    id: "machine-beta".to_string(),
+                    ssh: SshConfig {
+                        host: "172.18.0.101".to_string(),
+                        port: 10022,
+                        fingerprint: "12:34:56:78:9a:bc:de:f0:11:22:33:44:55:66:77:88".to_string(),
+                        username: "abc".to_string(),
+                        password: "def".to_string(),
+                        // The default private key must be ignored,
+                        // because the per-machine password was specified.
+                        private_key: "".to_string(),
+                        private_key_passphrase: "".to_string(),
+                    },
+                    runners: RunnersConfig { max: 16 },
+                },
+                MachineConfig {
+                    id: "machine-theta".to_string(),
+                    ssh: SshConfig {
+                        host: "172.18.0.102".to_string(),
+                        port: 8022,
+                        fingerprint: "".to_string(),
+                        username: "default_username".to_string(),
+                        // The default password must be ignored,
+                        // because the per-machine private key was specified.
+                        password: "".to_string(),
+                        private_key: "ghi".to_string(),
+                        private_key_passphrase: "jkl".to_string(),
+                    },
+                    runners: RunnersConfig { max: 16 },
+                },
+            ]);
+        }
+
+        #[test]
+        fn default_machine_runners_config() {
+            let config = read_config("tests/fixtures/config/default_machine_runners_config.yaml");
+            let machines = &config.machines[0];
+            assert_that!(machines.runners.max).is_equal_to(16);
+        }
+
+        #[test]
+        fn default_machine_runners_config_from_defaults() {
+            let config = read_config(
+                "tests/fixtures/config/default_machine_runners_config_from_defaults.yaml",
+            );
+            let machines = &config.machines[0];
+            assert_that!(machines.runners.max).is_equal_to(8);
+        }
+
+        #[test]
+        fn overridden_machine_runners_config() {
+            let config =
+                read_config("tests/fixtures/config/overridden_machine_runners_config.yaml");
+            let machines = &config.machines[0];
+            assert_that!(machines.runners.max).is_equal_to(4);
         }
     }
 

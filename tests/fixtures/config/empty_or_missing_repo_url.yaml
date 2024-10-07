@@ -2,5 +2,10 @@ github:
   personal_access_token: 'ghp_my_secret_token'
   runners:
     repo_url: ''
+
 machines:
   - id: machine-alpha
+    ssh:
+      host: alpha.example.tld
+      username: trustin
+      password: my_secret_password

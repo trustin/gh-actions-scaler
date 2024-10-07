@@ -2,6 +2,7 @@ github:
   personal_access_token: 'ghp_my_secret_token'
   runners:
     repo_url: https://github.com/trustin/gh-actions-scaler
+
 machines:
   - id: machine-1
     ssh:

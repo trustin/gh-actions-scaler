@@ -2,5 +2,10 @@ github:
   personal_access_token: ${file:non_existent_file}
   runners:
     repo_url: https://github.com/trustin/gh-actions-scaler
+
 machines:
   - id: machine-alpha
+    ssh:
+      host: alpha.example.tld
+      username: trustin
+      password: my_secret_password
