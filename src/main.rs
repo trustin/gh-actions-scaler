@@ -1,4 +1,5 @@
 mod config;
+mod machine;
 
 #[macro_use]
 extern crate log;
@@ -8,6 +9,7 @@ use std::path::PathBuf;
 use std::process::exit;
 
 use crate::config::{Config, ConfigError, LogLevel};
+use crate::machine::Machine;
 use clap::Parser;
 use log::LevelFilter;
 
@@ -94,4 +96,12 @@ fn main() {
     }
 
     debug!("Deserialized configuration: {:#?}", config);
+
+    let first_machine = Machine::new(&config.machines[0]);
+    match first_machine.start_runner() {
+        Ok(_) => {}
+        Err(err) => {
+            error!("{}", err);
+        }
+    }
 }

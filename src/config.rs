@@ -316,7 +316,7 @@ pub struct GithubConfig {
 }
 
 impl Debug for GithubConfig {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_struct("GithubConfig")
             .field(
                 "personal_access_token",
@@ -348,7 +348,7 @@ pub struct MachineDefaultsConfig {
     pub runners: RunnersConfig,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct MachineConfig {
     #[serde(default)]
@@ -359,7 +359,7 @@ pub struct MachineConfig {
     pub runners: RunnersConfig,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SshConfig {
     #[serde(default)]
@@ -393,7 +393,7 @@ impl Default for SshConfig {
 }
 
 impl Debug for SshConfig {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_struct("SshConfig")
             .field("host", &self.host)
             .field("port", &self.port)
@@ -409,7 +409,7 @@ impl Debug for SshConfig {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
 pub struct RunnersConfig {
