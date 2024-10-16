@@ -93,16 +93,17 @@ impl Machine {
         let cmd = command.as_ref();
         ch.exec(cmd)?;
 
-        let mut out = String::new();
-        ch.read_to_string(&mut out)?;
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        ch.read_to_string(&mut stdout)?;
+        ch.stderr().read_to_string(&mut stderr)?;
         ch.wait_close()?;
 
-        let out = out.trim();
         if ch.exit_status()? == 0 {
-            Ok(out.to_string())
+            Ok(stdout.trim().to_string())
         } else {
-            let mut indented_out: String = String::with_capacity(out.len() * 3 / 2);
-            for line in out.lines() {
+            let mut indented_out: String = String::with_capacity(stderr.len() * 3 / 2);
+            for line in stderr.lines() {
                 indented_out.push_str("    ");
                 indented_out.push_str(line);
                 indented_out.push('\n');
