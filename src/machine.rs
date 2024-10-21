@@ -1,7 +1,10 @@
-use crate::config::MachineConfig;
+use crate::config::{Config, MachineConfig};
 use log::{debug, info};
+use maplit::hashmap;
 use ssh2::Session;
+use std::collections::HashMap;
 use std::error::Error;
+use std::fmt::Write;
 use std::io::Read;
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
@@ -17,7 +20,7 @@ impl Machine {
         }
     }
 
-    pub fn start_runner(&self) -> Result<(), Box<dyn Error>> {
+    pub fn start_runner(&self, config: &Config, run_id: u32) -> Result<(), Box<dyn Error>> {
         // Connect to the local SSH server
         let socket_addr = SocketAddr::new(self.config.ssh.host.parse()?, self.config.ssh.port);
         debug!("[{}] Making a connection attempt ..", socket_addr);
@@ -50,21 +53,46 @@ impl Machine {
             return Err("Authentication failed".into());
         }
 
+        // TODO: Make the image URL configurable.
         const IMAGE: &str = "ghcr.io/myoung34/docker-github-actions-runner:ubuntu-focal";
 
         info!(
             "[{}] Pulling the container image '{}' ..",
             socket_addr, IMAGE
         );
-        self.ssh_exec(&socket_addr, &mut sess, format!("docker pull {}", IMAGE))?;
+        Self::ssh_exec(&socket_addr, &mut sess, &["docker", "pull", IMAGE])?;
 
         info!("[{}] Pulled the container image", socket_addr);
 
         info!("[{}] Creating and starting a new container ..", socket_addr);
-        let container_id = self.ssh_exec(
+        let container_id = Self::ssh_exec_with_env(
             &socket_addr,
             &mut sess,
-            "docker run ".to_string() + "--detach " + "--label self-hosted-runner " + IMAGE,
+            &hashmap! {
+                "ACCESS_TOKEN" => config.github.personal_access_token.as_str(),
+            },
+            &vec![
+                "docker",
+                "run",
+                // "--detach",
+                "--label",
+                "github-self-hosted-runner",
+                "--label",
+                format!("github-workflow-run-id={}", run_id).as_str(),
+                "--env",
+                "ACCESS_TOKEN",
+                "--env",
+                format!("REPO_URL={}", config.github.runners.repo_url).as_str(),
+                "--env",
+                format!("RUNNER_NAME_PREFIX={}", config.github.runners.name_prefix).as_str(),
+                "--env",
+                format!("RUNNER_SCOPE={}", config.github.runners.scope).as_str(),
+                "--env",
+                "EPHEMERAL=true",
+                "--env",
+                "UNSET_CONFIG_VARS=true",
+                IMAGE,
+            ],
         )?;
         info!(
             "[{}] Started a new container: {}",
@@ -83,15 +111,88 @@ impl Machine {
         }
     }
 
-    fn ssh_exec(
-        &self,
+    fn ssh_exec_with_env(
         socket_addr: &SocketAddr,
         session: &mut Session,
-        command: impl AsRef<str>,
+        env: &HashMap<&str, &str>,
+        command: &Vec<&str>,
+    ) -> Result<String, Box<dyn Error>> {
+        let env_script_path = Self::ssh_generate_env_script(socket_addr, session, env)?;
+
+        // Prepend the command that sources the environment variable script and removes it.
+        let mut cmd_with_env = vec![
+            ".",
+            env_script_path.as_str(),
+            "&&",
+            "rm",
+            env_script_path.as_str(),
+            "&&",
+        ];
+        for arg in command {
+            cmd_with_env.push(arg);
+        }
+
+        Self::ssh_exec(socket_addr, session, &cmd_with_env)
+    }
+
+    fn ssh_generate_env_script(
+        socket_addr: &SocketAddr,
+        session: &mut Session,
+        env: &HashMap<&str, &str>,
+    ) -> Result<String, Box<dyn Error>> {
+        let env_script_path = Self::ssh_exec(
+            socket_addr,
+            session,
+            &["mktemp", "-t", "self-hosted-runner-env.XXXXXXXXXX"],
+        )?;
+
+        let mut cmd = String::new();
+        cmd.push_str("cat <<======== >");
+        cmd.push_str_escaped(env_script_path.as_str());
+        cmd.push('\n');
+
+        for kv in env {
+            // KEY=VALUE
+            cmd.push_str_escaped(kv.0);
+            cmd.push('=');
+            cmd.push_str_escaped(kv.1);
+            cmd.push('\n');
+
+            // export KEY
+            cmd.push_str("export ");
+            cmd.push_str_escaped(kv.0);
+            cmd.push('\n');
+        }
+
+        cmd.push_str("========\n");
+
+        Self::ssh_exec_noescape(socket_addr, session, cmd)?;
+        Ok(env_script_path)
+    }
+
+    fn ssh_exec(
+        socket_addr: &SocketAddr,
+        session: &mut Session,
+        command: &[&str],
+    ) -> Result<String, Box<dyn Error>> {
+        // Merge the arguments into a string while escaping if necessary.
+        let mut cmd = String::new();
+        for (i, arg) in command.iter().enumerate() {
+            if i != 0 {
+                cmd.push(' ');
+            }
+            cmd.push_str_escaped(arg);
+        }
+        Self::ssh_exec_noescape(socket_addr, session, cmd)
+    }
+
+    fn ssh_exec_noescape(
+        socket_addr: &SocketAddr,
+        session: &mut Session,
+        cmd: String,
     ) -> Result<String, Box<dyn Error>> {
         let mut ch = session.channel_session()?;
-        let cmd = command.as_ref();
-        ch.exec(cmd)?;
+        ch.exec(cmd.as_str())?;
 
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -99,21 +200,62 @@ impl Machine {
         ch.stderr().read_to_string(&mut stderr)?;
         ch.wait_close()?;
 
-        if ch.exit_status()? == 0 {
+        let exit_code = ch.exit_status()?;
+        if exit_code == 0 {
             Ok(stdout.trim().to_string())
         } else {
-            let mut indented_out: String = String::with_capacity(stderr.len() * 3 / 2);
-            for line in stderr.lines() {
-                indented_out.push_str("    ");
-                indented_out.push_str(line);
-                indented_out.push('\n');
+            let mut indented_out: String =
+                String::with_capacity((stdout.len() + stderr.len()) * 3 / 2);
+            write!(
+                indented_out,
+                "[{}] Failed to execute the command:\n\n    {}\n\nExit code: {}",
+                socket_addr, cmd, exit_code
+            )?;
+
+            if !stdout.is_empty() {
+                write!(indented_out, "\nStandard output:\n\n")?;
+                for line in stdout.lines() {
+                    indented_out.push_str("    ");
+                    indented_out.push_str(line);
+                    indented_out.push('\n');
+                }
             }
 
-            Err(format!(
-                "[{}] Failed to execute the command:\n\n    {}\n\nOutput:\n\n{}",
-                socket_addr, cmd, indented_out
-            )
-            .into())
+            if !stderr.is_empty() {
+                write!(indented_out, "\nStandard error:\n\n")?;
+                for line in stderr.lines() {
+                    indented_out.push_str("    ");
+                    indented_out.push_str(line);
+                    indented_out.push('\n');
+                }
+            }
+
+            Err(indented_out.into())
         }
+    }
+}
+
+// TODO: Write a test case for StringExt.
+trait StringExt {
+    fn push_str_escaped(&mut self, s: &str);
+}
+
+impl StringExt for String {
+    fn push_str_escaped(&mut self, s: &str) {
+        if !s.contains(['\'', '"', ' ', '\\']) {
+            // No need to escape
+            self.push_str(s);
+            return;
+        }
+
+        self.push('"');
+        for ch in s.chars() {
+            match ch {
+                '"' => self.push_str("\\\""),
+                '\\' => self.push_str("\\\\"),
+                _ => self.push(ch),
+            }
+        }
+        self.push('"');
     }
 }

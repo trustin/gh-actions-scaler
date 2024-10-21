@@ -1,12 +1,12 @@
-- Query GitHub or GitHub Enterprise for any pending workflow items.
+- (In-progress) Query GitHub or GitHub Enterprise for any pending workflow runs.
 - Periodically query each machine to gather its state:
 	- Whether the machine is up or down
 	- How many jobs are being run
 	- If there are any finished or crash jobs that need clean-up
 - If there is a pending workflow item:
 	- Choose the least loaded machine.
-	- (In-progress) Connect to it via SSH.
-	- Launch a new self-host runner container, so it picks up the job.
+	- (Done) Connect to it via SSH.
+	- (Done) Launch a new self-host runner container, so it picks up the job.
 - If there are any finished, crashed, or long-running containers:
 	- Connect to it via SSH.
 	- Destroy the containers to free up the disk space.
