@@ -16,7 +16,6 @@ mod string_ext_tests {
     fn push_str_escaped(input: &str, expected: &str) {
         let mut actual = String::new();
         actual.push_str_escaped(input);
-        dbg!(input, expected, &actual);
         assert_that!(actual).is_equal_to(expected.to_string());
     }
 }

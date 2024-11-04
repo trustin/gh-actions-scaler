@@ -15,6 +15,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_yaml_ng = "0.10.0"
 ssh2 = "0.9.4"
 test-case = "3.3.1"
+ureq = { version = "2.10.1", features = ["brotli", "charset", "json", "native-certs"] }
 whoami = "1.5.1"
 
 [dev-dependencies]
