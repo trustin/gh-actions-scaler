@@ -235,8 +235,7 @@ impl Machine {
     }
 }
 
-// TODO: Write a test case for StringExt.
-trait StringExt {
+pub trait StringExt {
     fn push_str_escaped(&mut self, s: &str);
 }
 
