@@ -1,68 +1,22 @@
 #[cfg(test)]
-mod string_escape {
+mod string_ext_tests {
     use gh_actions_scaler::machine::StringExt;
     use speculoos::assert_that;
+    use test_case::test_case;
 
-    #[test]
-    fn no_escape_needed() {
-        let mut s = String::new();
-        s.push_str_escaped(&"hello");
-        assert_that!(s).is_equal_to("hello".to_string());
-    }
-
-    #[test]
-    fn empty_string() {
-        let mut s = String::new();
-        s.push_str_escaped("");
-        assert_that!(s).is_equal_to("".to_string());
-    }
-
-    #[test]
-    fn double_quotes() {
-        let mut s = String::new();
-        s.push_str_escaped(r#"Hello "World""#);
-        assert_that!(s).is_equal_to(r#""Hello \"World\"""#.to_string());
-    }
-
-    #[test]
-    fn only_double_quotes() {
-        let mut s = String::new();
-        s.push_str_escaped(r#""""#);
-        assert_that!(s).is_equal_to(r#""\"\"""#.to_string());
-    }
-
-    #[test]
-    fn backslash() {
-        let mut s = String::new();
-        s.push_str_escaped(r"C:\Users\jopopscript");
-        assert_that!(s).is_equal_to(r#""C:\\Users\\jopopscript""#.to_string());
-    }
-
-    #[test]
-    fn only_backslashes() {
-        let mut s = String::new();
-        s.push_str_escaped(r"\\");
-        assert_that!(s).is_equal_to(r#""\\\\""#.to_string());
-    }
-
-    #[test]
-    fn double_quotes_and_backslash() {
-        let mut s = String::new();
-        s.push_str_escaped(r#""quoted" \path\"#);
-        assert_that!(s).is_equal_to(r#""\"quoted\" \\path\\""#.to_string());
-    }
-
-    #[test]
-    fn space() {
-        let mut s = String::new();
-        s.push_str_escaped("Hello World");
-        assert_that!(s).is_equal_to(r#""Hello World""#.to_string());
-    }
-
-    #[test]
-    fn unicode() {
-        let mut s = String::new();
-        s.push_str_escaped("안녕하세요 \"희승님\"");
-        assert_that!(s).is_equal_to(r#""안녕하세요 \"희승님\"""#.to_string());
+    #[test_case("", ""; "empty string")]
+    #[test_case("hello", "hello"; "a single word")]
+    #[test_case("안녕하세요", "안녕하세요"; "a single word (unicode)")]
+    #[test_case("Hello, World", r#""Hello, World""#; "two words")]
+    #[test_case("안녕하세요, 여러분!", r#""안녕하세요, 여러분!""#; "two words (unicode)")]
+    #[test_case(r#""foo"bar"baz""#, r#""\"foo\"bar\"baz\"""#; "double quotes")]
+    #[test_case("'foo'bar'baz'", r#""'foo'bar'baz'""#; "single quotes")]
+    #[test_case(r"\foo\bar\baz\", r#""\\foo\\bar\\baz\\""#; "backslashes")]
+    #[test_case(r#""foo" \bar\ 'baz'"#, r#""\"foo\" \\bar\\ 'baz'""#; "mixed special characters")]
+    fn push_str_escaped(input: &str, expected: &str) {
+        let mut actual = String::new();
+        actual.push_str_escaped(input);
+        dbg!(input, expected, &actual);
+        assert_that!(actual).is_equal_to(expected.to_string());
     }
 }
