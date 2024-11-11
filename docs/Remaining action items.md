@@ -1,4 +1,4 @@
-- (In-progress) Query GitHub or GitHub Enterprise for any pending workflow runs.
+- (Done) Query GitHub or GitHub Enterprise for any pending workflow runs.
 - Periodically query each machine to gather its state:
 	- Whether the machine is up or down
 	- How many jobs are being run

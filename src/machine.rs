@@ -20,7 +20,7 @@ impl Machine {
         }
     }
 
-    pub fn start_runner(&self, config: &Config, run_id: u32) -> Result<(), Box<dyn Error>> {
+    pub fn start_runner(&self, config: &Config, run_url: &str) -> Result<(), Box<dyn Error>> {
         // Connect to the local SSH server
         let socket_addr = SocketAddr::new(self.config.ssh.host.parse()?, self.config.ssh.port);
         debug!("[{}] Making a connection attempt ..", socket_addr);
@@ -56,14 +56,18 @@ impl Machine {
         // TODO: Make the image URL configurable.
         const IMAGE: &str = "ghcr.io/myoung34/docker-github-actions-runner:ubuntu-focal";
 
+        // FIXME(trustin): Pull only once a day.
+        //                 Keep the timestamp in ~/.cache/gh-actions-scaler (or $XDG_CACHE_HOME/...)
         info!(
             "[{}] Pulling the container image '{}' ..",
             socket_addr, IMAGE
         );
-        Self::ssh_exec(&socket_addr, &mut sess, &["docker", "pull", IMAGE])?;
+        Self::ssh_exec(&socket_addr, &mut sess, &["docker", "image", "pull", IMAGE])?;
 
         info!("[{}] Pulled the container image", socket_addr);
 
+        // FIXME(trustin): Specify a unique yet identifiable container name.
+        //                 Use `docker container rename <container_id> github-self-hosted-runner-<container_id>
         info!("[{}] Creating and starting a new container ..", socket_addr);
         let container_id = Self::ssh_exec_with_env(
             &socket_addr,
@@ -73,20 +77,21 @@ impl Machine {
             },
             &vec![
                 "docker",
+                "container",
                 "run",
-                // "--detach",
+                "--detach",
                 "--label",
                 "github-self-hosted-runner",
                 "--label",
-                format!("github-workflow-run-id={}", run_id).as_str(),
+                &format!("github-workflow-run-url={}", run_url),
                 "--env",
                 "ACCESS_TOKEN",
                 "--env",
-                format!("REPO_URL={}", config.github.runners.repo_url).as_str(),
+                &format!("REPO_URL={}", config.github.runners.repo_url),
                 "--env",
-                format!("RUNNER_NAME_PREFIX={}", config.github.runners.name_prefix).as_str(),
+                &format!("RUNNER_NAME_PREFIX={}", config.github.runners.name_prefix),
                 "--env",
-                format!("RUNNER_SCOPE={}", config.github.runners.scope).as_str(),
+                &format!("RUNNER_SCOPE={}", config.github.runners.scope),
                 "--env",
                 "EPHEMERAL=true",
                 "--env",
@@ -103,7 +108,7 @@ impl Machine {
     }
 
     fn passphrase_opt(&self) -> Option<&str> {
-        let passphrase = self.config.ssh.private_key_passphrase.as_str();
+        let passphrase = &self.config.ssh.private_key_passphrase;
         if passphrase.is_empty() {
             None
         } else {
@@ -120,14 +125,7 @@ impl Machine {
         let env_script_path = Self::ssh_generate_env_script(socket_addr, session, env)?;
 
         // Prepend the command that sources the environment variable script and removes it.
-        let mut cmd_with_env = vec![
-            ".",
-            env_script_path.as_str(),
-            "&&",
-            "rm",
-            env_script_path.as_str(),
-            "&&",
-        ];
+        let mut cmd_with_env = vec![".", &env_script_path, "&&", "rm", &env_script_path, "&&"];
         for arg in command {
             cmd_with_env.push(arg);
         }
@@ -148,7 +146,7 @@ impl Machine {
 
         let mut cmd = String::new();
         cmd.push_str("cat <<======== >");
-        cmd.push_str_escaped(env_script_path.as_str());
+        cmd.push_str_escaped(&env_script_path);
         cmd.push('\n');
 
         for kv in env {
@@ -192,7 +190,7 @@ impl Machine {
         cmd: String,
     ) -> Result<String, Box<dyn Error>> {
         let mut ch = session.channel_session()?;
-        ch.exec(cmd.as_str())?;
+        ch.exec(&cmd)?;
 
         let mut stdout = String::new();
         let mut stderr = String::new();

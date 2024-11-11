@@ -27,6 +27,10 @@ mod config_tests {
                         name_prefix: "runner".to_string(),
                         scope: "repo".to_string(),
                         repo_url: "https://github.com/trustin/gh-actions-scaler".to_string(),
+                        // TODO(trustin): Write a test case for GHE URLs.
+                        api_endpoint_url: "https://api.github.com".to_string(),
+                        repo_user: "trustin".to_string(),
+                        repo_name: "gh-actions-scaler".to_string(),
                     },
                 },
                 machine_defaults: MachineDefaultsConfig {

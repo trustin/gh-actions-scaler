@@ -4,6 +4,8 @@ use crate::config::resolver::ConfigResolver;
 use clap::ValueEnum;
 use log::warn;
 use log::LevelFilter;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fmt::{Debug, Formatter};
@@ -73,12 +75,49 @@ impl Config {
         c: &GithubConfig,
         r: &ConfigResolver,
     ) -> Result<GithubConfig, ConfigError> {
+        // Validate the repo URL and extract the API endpoint prefix, repo user and name from it.
+        static GITHUB_REPO_URL_RE: Lazy<Regex> =
+            Lazy::new(|| Regex::new(r"^((?:http|https)://[^/]+)/([^/]+)/([^/]+)/?").unwrap());
+        let repo_url = r.resolve(&c.runners.repo_url)?;
+        if repo_url.is_empty() {
+            return Err(ConfigError::ValidationFailure {
+                message: "An empty or missing URL in 'github.runners.repo_url'.".to_string(),
+            });
+        }
+        let (api_endpoint_url, repo_user, repo_name) =
+            if let Some(captures) = GITHUB_REPO_URL_RE.captures(repo_url.as_str()) {
+                let endpoint_prefix = captures.get(1).unwrap().as_str();
+                let repo_user = captures.get(2).unwrap().as_str();
+                let repo_name = captures.get(3).unwrap().as_str();
+                let api_endpoint_url = if endpoint_prefix.contains("://github.com") {
+                    "https://api.github.com".to_string()
+                } else {
+                    format!("{}/api/v3", endpoint_prefix)
+                };
+
+                (
+                    api_endpoint_url,
+                    repo_user.to_string(),
+                    repo_name.to_string(),
+                )
+            } else {
+                return Err(ConfigError::ValidationFailure {
+                    message: format!(
+                        "Not a GitHub or GHE URL '{}' in github.runners.repo_url.",
+                        repo_url
+                    ),
+                });
+            };
+
         let config = GithubConfig {
             personal_access_token: r.resolve(&c.personal_access_token)?,
             runners: GithubRunnerConfig {
                 name_prefix: r.resolve(&c.runners.name_prefix)?,
                 scope: r.resolve(&c.runners.scope)?,
-                repo_url: r.resolve(&c.runners.repo_url)?,
+                repo_url,
+                api_endpoint_url,
+                repo_user,
+                repo_name,
             },
         };
 
@@ -104,18 +143,6 @@ impl Config {
         if config.runners.scope != "repo" {
             return Err(ConfigError::ValidationFailure {
                 message: format!("An unsupported value '{}' in 'github.runners.scope'. 'repo' is the only supported value at the moment.", config.runners.scope)
-            });
-        }
-
-        let repo_url = &config.runners.repo_url;
-        if repo_url.is_empty() {
-            return Err(ConfigError::ValidationFailure {
-                message: "An empty or missing URL in 'github.runners.repo_url'.".to_string(),
-            });
-        }
-        if !repo_url.starts_with("http://") && !repo_url.starts_with("https://") {
-            return Err(ConfigError::ValidationFailure {
-                message: format!("An invalid URL '{}' in github.runners.repo_url.", repo_url),
             });
         }
 
@@ -307,7 +334,7 @@ impl LogLevel {
     }
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GithubConfig {
     #[serde(default)]
@@ -327,7 +354,7 @@ impl Debug for GithubConfig {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GithubRunnerConfig {
     #[serde(default = "default_github_runner_name_prefix")]
@@ -336,6 +363,12 @@ pub struct GithubRunnerConfig {
     pub scope: String,
     #[serde(default)]
     pub repo_url: String,
+    #[serde(skip_deserializing)]
+    pub api_endpoint_url: String,
+    #[serde(skip_deserializing)]
+    pub repo_user: String,
+    #[serde(skip_deserializing)]
+    pub repo_name: String,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]

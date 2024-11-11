@@ -1,10 +1,13 @@
 mod config;
+mod github;
 mod machine;
 
+use std::error::Error;
 use std::path::PathBuf;
 use std::process::exit;
 
 use crate::config::{Config, ConfigError, LogLevel};
+use crate::github::GithubClient;
 use crate::machine::Machine;
 use clap::Parser;
 use log::{debug, error, info, LevelFilter};
@@ -21,7 +24,7 @@ struct Cli {
     log_level: Option<LogLevel>,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     // Determine the path of the configuration file.
     let cli = Cli::parse();
     let config_path = cli.config.unwrap_or_else(|| {
@@ -93,11 +96,16 @@ fn main() {
 
     debug!("Deserialized configuration: {:#?}", config);
 
+    let github_client = GithubClient::new(&config.github);
+    let queued_runs = github_client.fetch_queued_workflow_runs()?;
+
+    info!("{:#?}", queued_runs);
+
     let first_machine = Machine::new(&config.machines[0]);
-    match first_machine.start_runner(&config, 0) {
-        Ok(_) => {}
-        Err(err) => {
-            error!("{}", err);
-        }
+    for run in queued_runs {
+        info!("Starting a new runner for: {}", run.url);
+        first_machine.start_runner(&config, &run.url)?;
     }
+
+    Ok(())
 }
