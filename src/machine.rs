@@ -1,5 +1,5 @@
 use crate::config::{Config, MachineConfig};
-use log::{debug, info};
+use log::{debug, info, warn};
 use maplit::hashmap;
 use ssh2::Session;
 use std::collections::HashMap;
@@ -7,7 +7,7 @@ use std::error::Error;
 use std::fmt::Write;
 use std::io::Read;
 use std::net::{SocketAddr, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub struct Machine {
     config: MachineConfig,
@@ -56,15 +56,34 @@ impl Machine {
         // TODO: Make the image URL configurable.
         const IMAGE: &str = "ghcr.io/myoung34/docker-github-actions-runner:ubuntu-focal";
 
-        // FIXME(trustin): Pull only once a day.
-        //                 Keep the timestamp in ~/.cache/gh-actions-scaler (or $XDG_CACHE_HOME/...)
-        info!(
-            "[{}] Pulling the container image '{}' ..",
-            socket_addr, IMAGE
-        );
-        Self::ssh_exec(&socket_addr, &mut sess, &["docker", "image", "pull", IMAGE])?;
+        // TODO inject cache_file_path ~/.cache/gh-actions-scaler (or $XDG_CACHE_HOME/...)
+        let cache_dir = "~/.cache";
+        let cache_file_name = "gh-actions-scaler";
+        let is_valid_cache_image =
+            Self::is_valid_cache_image(cache_dir, cache_file_name, &socket_addr, &mut sess)
+                .unwrap_or_else(|err| {
+                    // FIXME cant get current time or cant use cache version -> always image pulling
+                    //       for example cache file permission denied.
+                    warn!(
+                "[{}] Failed to open cache file or get current time. file_path: '{}/{}'. err: {}",
+                socket_addr, cache_dir, cache_file_name, err
+            );
+                    false
+                });
 
-        info!("[{}] Pulled the container image", socket_addr);
+        if !is_valid_cache_image {
+            info!(
+                "[{}] Pulling the container image '{}' ..",
+                socket_addr, IMAGE
+            );
+            Self::ssh_exec(&socket_addr, &mut sess, &["docker", "image", "pull", IMAGE])?;
+            info!("[{}] Pulled the container image", socket_addr);
+        } else {
+            info!(
+                "[{}] Cached container image '{}' already exists. no need to pull the image.",
+                socket_addr, IMAGE
+            );
+        }
 
         // FIXME(trustin): Specify a unique yet identifiable container name.
         //                 Use `docker container rename <container_id> github-self-hosted-runner-<container_id>
@@ -105,6 +124,55 @@ impl Machine {
         );
 
         Ok(())
+    }
+
+    /// Returns cache container image is valid
+    /// # Returns
+    ///
+    /// * `Ok(true)` - Container image valid and has not expired
+    /// * `Ok(false)` - Container image has expired. is no longer valid
+    /// * `Error` - An I/O error occurred while attempting to read(or write) the cache information file.
+    fn is_valid_cache_image(
+        dir: &str,
+        file_name: &str,
+        socket_addr: &SocketAddr,
+        sess: &mut Session,
+    ) -> Result<bool, Box<dyn Error>> {
+        let now_version = Self::now_cache_version()?;
+
+        let mut pull_path = String::new();
+        pull_path.push_str(dir);
+        pull_path.push('/');
+        pull_path.push_str(file_name);
+
+        let is_exist_file = Self::ssh_exec(socket_addr, sess, &["test", "-f", &pull_path])
+            .map(|_| true)
+            .unwrap_or(false);
+
+        if !is_exist_file {
+            Self::ssh_exec(socket_addr, sess, &["mkdir", "-p", dir])?;
+            Self::ssh_exec(socket_addr, sess, &["echo", &now_version, ">>", &pull_path])?;
+            return Ok(false);
+        }
+
+        let cached_version = Self::ssh_exec(socket_addr, sess, &["cat", &pull_path])?;
+        let is_valid = cached_version == now_version;
+        if !is_valid {
+            Self::ssh_exec(socket_addr, sess, &["echo", &now_version, ">>", &pull_path])?;
+        }
+        Ok(is_valid)
+    }
+
+    fn now_cache_version() -> Result<String, Box<dyn Error>> {
+        let epoch_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())?;
+
+        //TODO need convert datetime(yyhhdd) ex) "241125"
+        let seconds_a_day = 86400; // 60 * 60 * 24 = 86400
+        let days_since_epoch = epoch_seconds / seconds_a_day;
+        let cache_version = days_since_epoch.to_string();
+        Ok(cache_version)
     }
 
     fn passphrase_opt(&self) -> Option<&str> {
