@@ -53,24 +53,16 @@ impl Machine {
             return Err("Authentication failed".into());
         }
 
+        let is_valid_cache_image = Self::is_valid_cache_image(&socket_addr, &mut sess)
+            .unwrap_or_else(|err| {
+                // FIXME(JopopScript) cant get current time or cant use cache version -> always image pulling
+                //       for example cache file permission denied.
+                warn!("[{}] Container image is unknown to be valid. so can't use cache image. err: {}", socket_addr, err);
+                false
+            });
+
         // TODO: Make the image URL configurable.
         const IMAGE: &str = "ghcr.io/myoung34/docker-github-actions-runner:ubuntu-focal";
-
-        // TODO inject cache_file_path ~/.cache/gh-actions-scaler (or $XDG_CACHE_HOME/...)
-        let cache_dir = "~/.cache";
-        let cache_file_name = "gh-actions-scaler";
-        let is_valid_cache_image =
-            Self::is_valid_cache_image(cache_dir, cache_file_name, &socket_addr, &mut sess)
-                .unwrap_or_else(|err| {
-                    // FIXME cant get current time or cant use cache version -> always image pulling
-                    //       for example cache file permission denied.
-                    warn!(
-                "[{}] Failed to open cache file or get current time. file_path: '{}/{}'. err: {}",
-                socket_addr, cache_dir, cache_file_name, err
-            );
-                    false
-                });
-
         if !is_valid_cache_image {
             info!(
                 "[{}] Pulling the container image '{}' ..",
@@ -85,8 +77,6 @@ impl Machine {
             );
         }
 
-        // FIXME(trustin): Specify a unique yet identifiable container name.
-        //                 Use `docker container rename <container_id> github-self-hosted-runner-<container_id>
         info!("[{}] Creating and starting a new container ..", socket_addr);
         let container_id = Self::ssh_exec_with_env(
             &socket_addr,
@@ -118,11 +108,26 @@ impl Machine {
                 IMAGE,
             ],
         )?;
+
+        let mut container_name = String::new();
+        container_name.push_str("github-self-hosted-runner-");
+        container_name.push_str(&container_id);
+        Self::ssh_exec(
+            &socket_addr,
+            &mut sess,
+            &[
+                "docker",
+                "container",
+                "rename",
+                &container_id,
+                &container_name,
+            ],
+        )?;
+
         info!(
             "[{}] Started a new container: {}",
-            socket_addr, container_id
+            socket_addr, container_name
         );
-
         Ok(())
     }
 
@@ -130,27 +135,30 @@ impl Machine {
     /// # Returns
     ///
     /// * `Ok(true)` - Container image valid and has not expired
-    /// * `Ok(false)` - Container image has expired. is no longer valid
-    /// * `Error` - An I/O error occurred while attempting to read(or write) the cache information file.
+    /// * `Ok(false)`, `Error` - Container image is no longer valid.
     fn is_valid_cache_image(
-        dir: &str,
-        file_name: &str,
         socket_addr: &SocketAddr,
         sess: &mut Session,
     ) -> Result<bool, Box<dyn Error>> {
-        let now_version = Self::now_cache_version()?;
-
+        let dir = Self::ssh_exec(
+            socket_addr,
+            sess,
+            &["echo", "${XDG_CACHE_HOME:-$HOME/.cache}"],
+        )?;
+        let file_name = "gh-actions-scaler";
         let mut pull_path = String::new();
-        pull_path.push_str(dir);
+        pull_path.push_str(&dir);
         pull_path.push('/');
         pull_path.push_str(file_name);
+
+        let now_version = Self::now_cache_version()?;
 
         let is_exist_file = Self::ssh_exec(socket_addr, sess, &["test", "-f", &pull_path])
             .map(|_| true)
             .unwrap_or(false);
 
         if !is_exist_file {
-            Self::ssh_exec(socket_addr, sess, &["mkdir", "-p", dir])?;
+            Self::ssh_exec(socket_addr, sess, &["mkdir", "-p", &dir])?;
             Self::ssh_exec(socket_addr, sess, &["echo", &now_version, ">>", &pull_path])?;
             return Ok(false);
         }
@@ -168,7 +176,7 @@ impl Machine {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_secs())?;
 
-        //TODO need convert datetime(yyhhdd) ex) "241125"
+        //TODO(JopopScript) convert date format yyyyMMdd ex) "20241125"
         let seconds_a_day = 86400; // 60 * 60 * 24 = 86400
         let days_since_epoch = epoch_seconds / seconds_a_day;
         let cache_version = days_since_epoch.to_string();
