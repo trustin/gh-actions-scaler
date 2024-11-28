@@ -43,16 +43,16 @@ impl Machine {
             "[{}] Connection established; creating an SSH session ..",
             socket_addr
         );
-        let mut session = Session::new()?;
-        session.set_tcp_stream(tcp);
-        session.handshake()?;
+        let mut sess = Session::new()?;
+        sess.set_tcp_stream(tcp);
+        sess.handshake()?;
         debug!(
             "[{}] SSH session established; authenticating ..",
             socket_addr
         );
         if config.ssh.password.is_empty() {
             debug!("[{}] Using private key authentication", socket_addr);
-            session.userauth_pubkey_memory(
+            sess.userauth_pubkey_memory(
                 &config.ssh.username,
                 None,
                 &config.ssh.private_key,
@@ -60,14 +60,14 @@ impl Machine {
             )?;
         } else {
             debug!("[{}] Using password authentication", socket_addr);
-            session.userauth_password(&config.ssh.username, &config.ssh.password)?;
+            sess.userauth_password(&config.ssh.username, &config.ssh.password)?;
         }
 
-        if !session.authenticated() {
+        if !sess.authenticated() {
             return Err("Authentication failed".into());
         }
 
-        self.session = Some(session);
+        self.session = Some(sess);
         Ok(())
         // TODO If the cache file does not exist, create a session only once.
         //      ~/.cache/gh-actions-scaler (or $XDG_CACHE_HOME/...)
