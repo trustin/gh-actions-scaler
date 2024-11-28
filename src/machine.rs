@@ -98,8 +98,8 @@ impl Machine {
         );
 
         Self::ssh_exec(
-            session,
             &self.socket_addr,
+            session,
             &["docker", "image", "pull", IMAGE],
         )?;
 
@@ -112,8 +112,8 @@ impl Machine {
             &self.socket_addr
         );
         let container_id = Self::ssh_exec_with_env(
-            session,
             &self.socket_addr,
+            session,
             &hashmap! {
                 "ACCESS_TOKEN" => config.github.personal_access_token.as_str(),
             },
@@ -159,12 +159,12 @@ impl Machine {
     }
 
     fn ssh_exec_with_env(
-        session: &Session,
         socket_addr: &SocketAddr,
+        session: &Session,
         env: &HashMap<&str, &str>,
         command: &Vec<&str>,
     ) -> Result<String, Box<dyn Error>> {
-        let env_script_path = Self::ssh_generate_env_script(session, socket_addr, env)?;
+        let env_script_path = Self::ssh_generate_env_script(socket_addr, session, env)?;
 
         // Prepend the command that sources the environment variable script and removes it.
         let mut cmd_with_env = vec![".", &env_script_path, "&&", "rm", &env_script_path, "&&"];
@@ -172,17 +172,17 @@ impl Machine {
             cmd_with_env.push(arg);
         }
 
-        Self::ssh_exec(session, socket_addr, &cmd_with_env)
+        Self::ssh_exec(socket_addr, session, &cmd_with_env)
     }
 
     fn ssh_generate_env_script(
-        session: &Session,
         socket_addr: &SocketAddr,
+        session: &Session,
         env: &HashMap<&str, &str>,
     ) -> Result<String, Box<dyn Error>> {
         let env_script_path = Self::ssh_exec(
-            session,
             socket_addr,
+            session,
             &["mktemp", "-t", "self-hosted-runner-env.XXXXXXXXXX"],
         )?;
 
@@ -206,13 +206,13 @@ impl Machine {
 
         cmd.push_str("========\n");
 
-        Self::ssh_exec_noescape(session, socket_addr, cmd)?;
+        Self::ssh_exec_noescape(socket_addr, session, cmd)?;
         Ok(env_script_path)
     }
 
     fn ssh_exec(
-        session: &Session,
         socket_addr: &SocketAddr,
+        session: &Session,
         command: &[&str],
     ) -> Result<String, Box<dyn Error>> {
         // Merge the arguments into a string while escaping if necessary.
@@ -223,12 +223,12 @@ impl Machine {
             }
             cmd.push_str_escaped(arg);
         }
-        Self::ssh_exec_noescape(session, socket_addr, cmd)
+        Self::ssh_exec_noescape(socket_addr, session, cmd)
     }
 
     fn ssh_exec_noescape(
-        session: &Session,
         socket_addr: &SocketAddr,
+        session: &Session,
         cmd: String,
     ) -> Result<String, Box<dyn Error>> {
         let mut ch = session.channel_session()?;
