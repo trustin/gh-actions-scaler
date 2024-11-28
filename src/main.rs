@@ -101,7 +101,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     info!("{:#?}", queued_runs);
 
-    let first_machine = Machine::new(&config.machines[0]);
+    let mut first_machine = Machine::new(&config.machines[0]);
+    if let Err(e) = first_machine.connect_session() {
+        error!("Failed to connect session: {}", e);
+        return Err(e);
+    }
     for run in queued_runs {
         info!("Starting a new runner for: {}", run.url);
         first_machine.start_runner(&config, &run.url)?;
