@@ -34,9 +34,9 @@ impl Machine {
     }
 
     pub fn fetch_runners(&self) -> Result<Vec<RunnerInfo>, Box<dyn Error>> {
-        let (socket_addr, mut sess) = self.connect()?;
+        let sess = self.get_session()?;
 
-        info!("[{}] Retrieving the list of runners ..", socket_addr);
+        info!("[{}] Retrieving the list of runners ..", &self.socket_addr);
 
         let mut cmd = String::new();
         cmd.push_str("docker container ls --all --no-trunc --filter ");
@@ -47,7 +47,7 @@ impl Machine {
             "{{.ID}}|{{.State.Status}}|{{.Created}}|{{.State.StartedAt}}|{{.State.FinishedAt}}",
         );
 
-        let output = Self::ssh_exec(&socket_addr, &mut sess, &cmd)?;
+        let output = Self::ssh_exec(&self.socket_addr, sess, &cmd)?;
 
         // Parse the output.
         let mut res: Vec<RunnerInfo> = vec![];
@@ -79,7 +79,7 @@ impl Machine {
     }
 
     pub fn start_runner(&self, config: &Config) -> Result<(), Box<dyn Error>> {
-        let session = self.get_session()?;
+        let sess = self.get_session()?;
 
         // TODO: Make the image URL configurable.
         const IMAGE: &str = "ghcr.io/myoung34/docker-github-actions-runner:ubuntu-focal";
@@ -93,13 +93,16 @@ impl Machine {
         let mut pull_cmd = String::new();
         pull_cmd.push_str("docker image pull ");
         pull_cmd.push_str_escaped(IMAGE);
-        Self::ssh_exec(&self.socket_addr, session, &pull_cmd)?;
+        Self::ssh_exec(&self.socket_addr, sess, &pull_cmd)?;
 
         info!("[{}] Pulled the container image", &self.socket_addr);
 
         // FIXME(trustin): Specify a unique yet identifiable container name.
         //                 Use `docker container rename <container_id> github-self-hosted-runner-<container_id>
-        info!("[{}] Creating and starting a new container ..", &self.socket_addr);
+        info!(
+            "[{}] Creating and starting a new container ..",
+            &self.socket_addr
+        );
         let mut run_cmd = String::new();
         run_cmd.push_str("docker container run --detach --restart no --label ");
         run_cmd.push_str_escaped("github-self-hosted-runner");
@@ -116,7 +119,7 @@ impl Machine {
 
         let container_id = Self::ssh_exec_with_env(
             &self.socket_addr,
-            session,
+            sess,
             &hashmap! {
                 "ACCESS_TOKEN" => config.github.personal_access_token.as_str(),
             },
@@ -178,7 +181,7 @@ impl Machine {
                 "[{}:{}] not connected to the machine yet. Try after SSH connect.",
                 ssh.host, ssh.port
             )
-                .into()
+            .into()
         })
     }
 
