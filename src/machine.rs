@@ -1,6 +1,6 @@
 use crate::config::{Config, MachineConfig};
 use chrono::{DateTime, Datelike, ParseResult, Utc};
-use log::{debug, info};
+use log::{debug, info, warn};
 use maplit::hashmap;
 use ssh2::Session;
 use std::collections::HashMap;
@@ -69,21 +69,32 @@ impl Machine {
     pub fn start_runner(&self, config: &Config) -> Result<(), Box<dyn Error>> {
         let (socket_addr, mut sess) = self.connect()?;
 
+        let is_valid_cache_image = Self::is_valid_cache_image(&socket_addr, &mut sess)
+            .unwrap_or_else(|err| {
+                // FIXME(JopopScript) cant get current time or cant use cache version -> always image pulling
+                //       for example cache file permission denied.
+                warn!("[{}] Container image is unknown to be valid. so can't use cache image. err: {}", socket_addr, err);
+                false
+            });
+
         // TODO: Make the image URL configurable.
         const IMAGE: &str = "ghcr.io/myoung34/docker-github-actions-runner:ubuntu-focal";
-
-        // FIXME(trustin): Pull only once a day.
-        //                 Keep the timestamp in ~/.cache/gh-actions-scaler (or $XDG_CACHE_HOME/...)
-        info!(
-            "[{}] Pulling the container image '{}' ..",
-            socket_addr, IMAGE
-        );
-        let mut pull_cmd = String::new();
-        pull_cmd.push_str("docker image pull ");
-        pull_cmd.push_str_escaped(IMAGE);
-        Self::ssh_exec(&socket_addr, &mut sess, &pull_cmd)?;
-
-        info!("[{}] Pulled the container image", socket_addr);
+        if !is_valid_cache_image {
+            info!(
+                "[{}] Pulling the container image '{}' ..",
+                socket_addr, IMAGE
+            );
+            let mut pull_cmd = String::new();
+            pull_cmd.push_str("docker image pull ");
+            pull_cmd.push_str_escaped(IMAGE);
+            Self::ssh_exec(&socket_addr, &mut sess, &pull_cmd)?;
+            info!("[{}] Pulled the container image", socket_addr);
+        } else {
+            info!(
+                "[{}] Cached container image '{}' already exists. no need to pull the image.",
+                socket_addr, IMAGE
+            );
+        }
 
         // FIXME(trustin): Specify a unique yet identifiable container name.
         //                 Use `docker container rename <container_id> github-self-hosted-runner-<container_id>
@@ -110,11 +121,22 @@ impl Machine {
             },
             &run_cmd,
         )?;
+
+        let mut container_name = String::new();
+        container_name.push_str("github-self-hosted-runner-");
+        container_name.push_str(&container_id);
+
+        let mut rename_cmd = String::new();
+        rename_cmd.push_str("docker container rename ");
+        rename_cmd.push_str(&container_id);
+        rename_cmd.push(' ');
+        rename_cmd.push_str_escaped(&container_name);
+        Self::ssh_exec(&socket_addr, &mut sess, &rename_cmd)?;
+
         info!(
             "[{}] Started a new container: {}",
-            socket_addr, container_id
+            socket_addr, container_name
         );
-
         Ok(())
     }
 
@@ -152,6 +174,63 @@ impl Machine {
         }
 
         Ok((socket_addr, sess))
+    }
+
+    /// Returns cache container image is valid
+    /// # Returns
+    ///
+    /// * `Ok(true)` - Container image valid and has not expired
+    /// * `Ok(false)`, `Error` - Container image is no longer valid.
+    fn is_valid_cache_image(
+        socket_addr: &SocketAddr,
+        sess: &mut Session,
+    ) -> Result<bool, Box<dyn Error>> {
+        let dir = Self::ssh_exec(socket_addr, sess, "echo ${XDG_CACHE_HOME:-$HOME/.cache}")?;
+        let file_name = "gh-actions-scaler";
+        let mut pull_path = String::new();
+        pull_path.push_str(&dir);
+        pull_path.push('/');
+        pull_path.push_str(file_name);
+
+        let now_version = Utc::now().date_naive().to_string();
+
+        let mut exists_check_cmd = String::new();
+        exists_check_cmd.push_str("test -f ");
+        exists_check_cmd.push_str_escaped(&pull_path);
+        let is_exist_file = Self::ssh_exec(socket_addr, sess, &exists_check_cmd)
+            .map(|_| true)
+            .unwrap_or(false);
+
+        if !is_exist_file {
+            let mut make_dir_cmd = String::new();
+            make_dir_cmd.push_str("mkdir -p ");
+            make_dir_cmd.push_str_escaped(&dir);
+            let mut make_file_cmd = String::new();
+            make_file_cmd.push_str("echo ");
+            make_file_cmd.push_str_escaped(&now_version);
+            make_file_cmd.push_str(" >> ");
+            make_file_cmd.push_str_escaped(&pull_path);
+
+            Self::ssh_exec(socket_addr, sess, &make_dir_cmd)?;
+            Self::ssh_exec(socket_addr, sess, &make_file_cmd)?;
+            return Ok(false);
+        }
+
+        let mut read_cache_cmd = String::new();
+        read_cache_cmd.push_str("cat ");
+        read_cache_cmd.push_str_escaped(&pull_path);
+        let cached_version = Self::ssh_exec(socket_addr, sess, &read_cache_cmd)?;
+
+        let is_valid = cached_version == now_version;
+        if !is_valid {
+            let mut update_cache_cmd = String::new();
+            update_cache_cmd.push_str("echo ");
+            update_cache_cmd.push_str_escaped(&now_version);
+            update_cache_cmd.push_str(" >> ");
+            update_cache_cmd.push_str_escaped(&pull_path);
+            Self::ssh_exec(socket_addr, sess, &update_cache_cmd)?;
+        }
+        Ok(is_valid)
     }
 
     fn passphrase_opt(&self) -> Option<&str> {
