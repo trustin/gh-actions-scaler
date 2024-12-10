@@ -8,7 +8,7 @@ use std::error::Error;
 use std::fmt::Write;
 use std::io::Read;
 use std::net::{SocketAddr, TcpStream};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 pub struct Machine {
     config: MachineConfig,
@@ -129,7 +129,7 @@ impl Machine {
         let mut rename_cmd = String::new();
         rename_cmd.push_str("docker container rename ");
         rename_cmd.push_str(&container_id);
-        rename_cmd.push_str(" ");
+        rename_cmd.push(' ');
         rename_cmd.push_str_escaped(&container_name);
         Self::ssh_exec(&socket_addr, &mut sess, &rename_cmd)?;
 
@@ -185,47 +185,52 @@ impl Machine {
         socket_addr: &SocketAddr,
         sess: &mut Session,
     ) -> Result<bool, Box<dyn Error>> {
-        let dir = Self::ssh_exec(
-            socket_addr,
-            sess,
-            &["echo", "${XDG_CACHE_HOME:-$HOME/.cache}"],
-        )?;
+        let dir = Self::ssh_exec(socket_addr, sess, "echo ${XDG_CACHE_HOME:-$HOME/.cache}")?;
         let file_name = "gh-actions-scaler";
         let mut pull_path = String::new();
         pull_path.push_str(&dir);
         pull_path.push('/');
         pull_path.push_str(file_name);
 
-        let now_version = Self::now_cache_version()?;
+        let now_version = Utc::now().date_naive().to_string();
 
-        let is_exist_file = Self::ssh_exec(socket_addr, sess, &["test", "-f", &pull_path])
+        let mut exists_check_cmd = String::new();
+        exists_check_cmd.push_str("test -f ");
+        exists_check_cmd.push_str_escaped(&pull_path);
+        let is_exist_file = Self::ssh_exec(socket_addr, sess, &exists_check_cmd)
             .map(|_| true)
             .unwrap_or(false);
 
         if !is_exist_file {
-            Self::ssh_exec(socket_addr, sess, &["mkdir", "-p", &dir])?;
-            Self::ssh_exec(socket_addr, sess, &["echo", &now_version, ">>", &pull_path])?;
+            let mut make_dir_cmd = String::new();
+            make_dir_cmd.push_str("mkdir -p ");
+            make_dir_cmd.push_str_escaped(&dir);
+            let mut make_file_cmd = String::new();
+            make_file_cmd.push_str("echo ");
+            make_file_cmd.push_str_escaped(&now_version);
+            make_file_cmd.push_str(" >> ");
+            make_file_cmd.push_str_escaped(&pull_path);
+
+            Self::ssh_exec(socket_addr, sess, &make_dir_cmd)?;
+            Self::ssh_exec(socket_addr, sess, &make_file_cmd)?;
             return Ok(false);
         }
 
-        let cached_version = Self::ssh_exec(socket_addr, sess, &["cat", &pull_path])?;
+        let mut read_cache_cmd = String::new();
+        read_cache_cmd.push_str("cat ");
+        read_cache_cmd.push_str_escaped(&pull_path);
+        let cached_version = Self::ssh_exec(socket_addr, sess, &read_cache_cmd)?;
+
         let is_valid = cached_version == now_version;
         if !is_valid {
-            Self::ssh_exec(socket_addr, sess, &["echo", &now_version, ">>", &pull_path])?;
+            let mut update_cache_cmd = String::new();
+            update_cache_cmd.push_str("echo ");
+            update_cache_cmd.push_str_escaped(&now_version);
+            update_cache_cmd.push_str(" >> ");
+            update_cache_cmd.push_str_escaped(&pull_path);
+            Self::ssh_exec(socket_addr, sess, &update_cache_cmd)?;
         }
         Ok(is_valid)
-    }
-
-    fn now_cache_version() -> Result<String, Box<dyn Error>> {
-        let epoch_seconds = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs())?;
-
-        //TODO(JopopScript) convert date format yyyyMMdd ex) "20241125"
-        let seconds_a_day = 86400; // 60 * 60 * 24 = 86400
-        let days_since_epoch = epoch_seconds / seconds_a_day;
-        let cache_version = days_since_epoch.to_string();
-        Ok(cache_version)
     }
 
     fn passphrase_opt(&self) -> Option<&str> {
