@@ -18,4 +18,19 @@ mod string_ext_tests {
         actual.push_str_escaped(input);
         assert_that!(actual).is_equal_to(expected.to_string());
     }
+
+    #[test]
+    fn push_str_escaped_special_chars() {
+        let chars_to_escape = "'|&!;$()[]{}<>#`";
+        for char_to_escape in chars_to_escape.chars() {
+            let input = format!(
+                "{}foo{}bar{}",
+                char_to_escape, char_to_escape, char_to_escape
+            );
+            let expected = format!("\"{}\"", input);
+            let mut actual = String::new();
+            actual.push_str_escaped(&input);
+            assert_that!(actual).is_equal_to(expected);
+        }
+    }
 }

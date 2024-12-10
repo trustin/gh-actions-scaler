@@ -102,9 +102,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     info!("{:#?}", queued_runs);
 
     let first_machine = Machine::new(&config.machines[0]);
+    debug!("{:#?}", first_machine.fetch_runners()?);
+
     for run in queued_runs {
         info!("Starting a new runner for: {}", run.url);
-        first_machine.start_runner(&config, &run.url)?;
+        first_machine.start_runner(&config)?;
+        debug!("{:#?}", first_machine.fetch_runners()?);
     }
 
     Ok(())
