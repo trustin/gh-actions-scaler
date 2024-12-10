@@ -12,19 +12,31 @@ use std::time::Duration;
 
 pub struct Machine {
     config: MachineConfig,
+    socket_addr: SocketAddr,
+    session: Option<Session>,
 }
 
 impl Machine {
-    pub fn new(config: &MachineConfig) -> Self {
-        Self {
-            config: config.clone(),
-        }
+    pub fn new(config: &MachineConfig) -> Result<Self, Box<dyn Error>> {
+        let cloned_config = config.clone();
+        let socket_addr = SocketAddr::new(cloned_config.ssh.host.parse()?, cloned_config.ssh.port);
+        Ok(Self {
+            config: cloned_config,
+            socket_addr,
+            session: None,
+        })
+    }
+
+    pub fn new_with_session(config: &MachineConfig) -> Result<Self, Box<dyn Error>> {
+        let mut machine = Self::new(config)?;
+        machine.connect_session()?;
+        Ok(machine)
     }
 
     pub fn fetch_runners(&self) -> Result<Vec<RunnerInfo>, Box<dyn Error>> {
-        let (socket_addr, mut sess) = self.connect()?;
+        let sess = self.get_session()?;
 
-        info!("[{}] Retrieving the list of runners ..", socket_addr);
+        info!("[{}] Retrieving the list of runners ..", &self.socket_addr);
 
         let mut cmd = String::new();
         cmd.push_str("docker container ls --all --no-trunc --filter ");
@@ -35,7 +47,7 @@ impl Machine {
             "{{.ID}}|{{.State.Status}}|{{.Created}}|{{.State.StartedAt}}|{{.State.FinishedAt}}",
         );
 
-        let output = Self::ssh_exec(&socket_addr, &mut sess, &cmd)?;
+        let output = Self::ssh_exec(&self.socket_addr, sess, &cmd)?;
 
         // Parse the output.
         let mut res: Vec<RunnerInfo> = vec![];
@@ -67,7 +79,7 @@ impl Machine {
     }
 
     pub fn start_runner(&self, config: &Config) -> Result<(), Box<dyn Error>> {
-        let (socket_addr, mut sess) = self.connect()?;
+        let sess = self.get_session()?;
 
         // TODO: Make the image URL configurable.
         const IMAGE: &str = "ghcr.io/myoung34/docker-github-actions-runner:ubuntu-focal";
@@ -76,18 +88,21 @@ impl Machine {
         //                 Keep the timestamp in ~/.cache/gh-actions-scaler (or $XDG_CACHE_HOME/...)
         info!(
             "[{}] Pulling the container image '{}' ..",
-            socket_addr, IMAGE
+            &self.socket_addr, IMAGE
         );
         let mut pull_cmd = String::new();
         pull_cmd.push_str("docker image pull ");
         pull_cmd.push_str_escaped(IMAGE);
-        Self::ssh_exec(&socket_addr, &mut sess, &pull_cmd)?;
+        Self::ssh_exec(&self.socket_addr, sess, &pull_cmd)?;
 
-        info!("[{}] Pulled the container image", socket_addr);
+        info!("[{}] Pulled the container image", &self.socket_addr);
 
         // FIXME(trustin): Specify a unique yet identifiable container name.
         //                 Use `docker container rename <container_id> github-self-hosted-runner-<container_id>
-        info!("[{}] Creating and starting a new container ..", socket_addr);
+        info!(
+            "[{}] Creating and starting a new container ..",
+            &self.socket_addr
+        );
         let mut run_cmd = String::new();
         run_cmd.push_str("docker container run --detach --restart no --label ");
         run_cmd.push_str_escaped("github-self-hosted-runner");
@@ -103,8 +118,8 @@ impl Machine {
         run_cmd.push_str_escaped(IMAGE);
 
         let container_id = Self::ssh_exec_with_env(
-            &socket_addr,
-            &mut sess,
+            &self.socket_addr,
+            sess,
             &hashmap! {
                 "ACCESS_TOKEN" => config.github.personal_access_token.as_str(),
             },
@@ -112,17 +127,19 @@ impl Machine {
         )?;
         info!(
             "[{}] Started a new container: {}",
-            socket_addr, container_id
+            &self.socket_addr, container_id
         );
 
         Ok(())
     }
 
-    fn connect(&self) -> Result<(SocketAddr, Session), Box<dyn Error>> {
+    fn connect_session(&mut self) -> Result<(), Box<dyn Error>> {
+        let config = &self.config;
+        let socket_addr = &self.socket_addr;
+
         // Connect to the SSH server
-        let socket_addr = SocketAddr::new(self.config.ssh.host.parse()?, self.config.ssh.port);
         debug!("[{}] Making a connection attempt ..", socket_addr);
-        let tcp = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(30))?;
+        let tcp = TcpStream::connect_timeout(socket_addr, Duration::from_secs(30))?;
         debug!(
             "[{}] Connection established; creating an SSH session ..",
             socket_addr
@@ -134,24 +151,38 @@ impl Machine {
             "[{}] SSH session established; authenticating ..",
             socket_addr
         );
-        if self.config.ssh.password.is_empty() {
+        if config.ssh.password.is_empty() {
             debug!("[{}] Using private key authentication", socket_addr);
             sess.userauth_pubkey_memory(
-                &self.config.ssh.username,
+                &config.ssh.username,
                 None,
-                &self.config.ssh.private_key,
+                &config.ssh.private_key,
                 self.passphrase_opt(),
             )?;
         } else {
             debug!("[{}] Using password authentication", socket_addr);
-            sess.userauth_password(&self.config.ssh.username, &self.config.ssh.password)?;
+            sess.userauth_password(&config.ssh.username, &config.ssh.password)?;
         }
 
         if !sess.authenticated() {
             return Err("Authentication failed".into());
         }
 
-        Ok((socket_addr, sess))
+        self.session = Some(sess);
+        Ok(())
+        // TODO If the cache file does not exist, create a session only once.
+        //      ~/.cache/gh-actions-scaler (or $XDG_CACHE_HOME/...)
+    }
+
+    fn get_session(&self) -> Result<&Session, Box<dyn Error>> {
+        self.session.as_ref().ok_or_else(|| {
+            let ssh = &self.config.ssh;
+            format!(
+                "[{}:{}] not connected to the machine yet. Try after SSH connect.",
+                ssh.host, ssh.port
+            )
+            .into()
+        })
     }
 
     fn passphrase_opt(&self) -> Option<&str> {
@@ -165,7 +196,7 @@ impl Machine {
 
     fn ssh_exec_with_env(
         socket_addr: &SocketAddr,
-        session: &mut Session,
+        session: &Session,
         env: &HashMap<&str, &str>,
         command: &str,
     ) -> Result<String, Box<dyn Error>> {
@@ -185,7 +216,7 @@ impl Machine {
 
     fn ssh_generate_env_script(
         socket_addr: &SocketAddr,
-        session: &mut Session,
+        session: &Session,
         env: &HashMap<&str, &str>,
     ) -> Result<String, Box<dyn Error>> {
         let env_script_path = Self::ssh_exec(
@@ -220,7 +251,7 @@ impl Machine {
 
     fn ssh_exec(
         socket_addr: &SocketAddr,
-        session: &mut Session,
+        session: &Session,
         cmd: &str,
     ) -> Result<String, Box<dyn Error>> {
         let mut ch = session.channel_session()?;
