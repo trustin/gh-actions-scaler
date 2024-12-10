@@ -1,8 +1,8 @@
 - (Done) Query GitHub or GitHub Enterprise for any pending workflow runs.
 - Periodically query each machine to gather its state:
-	- Whether the machine is up or down
-	- How many jobs are being run
-	- If there are any finished or crash jobs that need clean-up
+	- (Done) Whether the machine is up or down
+	- (Done) How many jobs are being run
+	- (Done) If there are any finished or crashed jobs that need clean-up
 - If there is a pending workflow item:
 	- Choose the least loaded machine.
 	- (Done) Connect to it via SSH.

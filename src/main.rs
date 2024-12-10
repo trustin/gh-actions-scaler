@@ -105,10 +105,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         error!("Failed to connect session: {}", e);
         e
     })?;
+    debug!("{:#?}", first_machine.fetch_runners()?);
 
     for run in queued_runs {
         info!("Starting a new runner for: {}", run.url);
-        first_machine.start_runner(&config, &run.url)?;
+        first_machine.start_runner(&config)?;
+        debug!("{:#?}", first_machine.fetch_runners()?);
     }
 
     Ok(())
